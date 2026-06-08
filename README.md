@@ -1,57 +1,89 @@
-![](https://raw.githubusercontent.com/opentofu/brand-artifacts/main/full/transparent/SVG/on-dark.svg#gh-dark-mode-only)
-![](https://raw.githubusercontent.com/opentofu/brand-artifacts/main/full/transparent/SVG/on-light.svg#gh-light-mode-only)
+# UniSaaS.UniCORE.OpenTofu
 
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/10508/badge)](https://www.bestpractices.dev/projects/10508)
+**SCAFFOLD-ANCHOR repository — initial scaffold 2026-06-04.**
 
-[Homepage](https://opentofu.org/) | [Slack](https://opentofu.org/slack) | [Get Started](https://opentofu.org/docs/intro/install)
+Full scaffolding, upstream-fork integration, and source-code work all pending a fresh dedicated kickoff arc. This initial commit exists to lock the repository's identity, licence position, and place in the UniCORE Sanity Check fleet so the work cannot be forgotten.
 
-OpenTofu is an OSS tool for building, changing, and versioning infrastructure safely and efficiently. OpenTofu can manage existing and popular service providers as well as custom in-house solutions.
+Author: **Bryan Fred, Unitek Systems Limited, Bedford, United Kingdom.**
+First commit: **2026-06-04 17:45 UTC.**
 
-## Getting help and contributing
+---
 
-- Have a question?
-  - Post it in [GitHub Discussions](https://github.com/orgs/opentofu/discussions)
-  - Open a [GitHub issue](https://github.com/opentofu/opentofu/issues/new/choose)
-  - Join us in the [#opentofu channel on the CNCF Slack](https://opentofu.org/slack/)!
-- Want to contribute?
-  - Please read the [Contribution Guide](CONTRIBUTING.md).
-- Recurring Events
-  - [Community Meetings](https://meet.google.com/xfm-cgms-has) on Wednesdays at 12:30 UTC ([calendar](https://calendar.google.com/calendar/event?eid=NDg0aWl2Y3U1aHFva3N0bGhyMHBhNzdpZmsgY18zZjJkZDNjMWZlMGVmNGU5M2VmM2ZjNDU2Y2EyZGQyMTlhMmU4ZmQ4NWY2YjQwNzUwYWYxNmMzZGYzNzBiZjkzQGc))
-  - [Technical Steering Committee Meetings](https://meet.google.com/cry-houa-qbk) every other Tuesday at 4pm UTC ([calendar](https://calendar.google.com/calendar/u/0/event?eid=M3JyMWtuYWptdXI0Zms4ZnJpNmppcDczb3RfMjAyNTA1MjdUMTYwMDAwWiBjXzNmMmRkM2MxZmUwZWY0ZTkzZWYzZmM0NTZjYTJkZDIxOWEyZThmZDg1ZjZiNDA3NTBhZjE2YzNkZjM3MGJmOTNAZw))
+## What this repository is
 
-> [!TIP]
-> For more OpenTofu events, subscribe to the [OpenTofu Events Calendar](https://calendar.google.com/calendar/embed?src=c_3f2dd3c1fe0ef4e93ef3fc456ca2dd219a2e8fd85f6b40750af16c3df370bf93%40group.calendar.google.com)!
+`bryanunitek/UniSaaS.UniCORE.OpenTofu` is the **OpenTofu** family member: SaaS-deployment-shape public gift surface. Documentation today; source code at certification.
 
-## Key features
+**Family purpose:** Open-source infrastructure-as-code (Terraform safe fork) — IaC for UniCORE.GVB infrastructure.
 
-- **Infrastructure as Code**: Infrastructure is described using a high-level configuration syntax. This allows a blueprint of your datacenter to be versioned and treated as you would any other code. Additionally, infrastructure can be shared and re-used.
+**Deployment shape:** This is the **SaaS-shape** member of the family. It tracks the same upstream codebase as [`UniCORE.OpenTofu`](https://github.com/bryanunitek/UniCORE.OpenTofu) (on-prem shape) but carries SaaS-specific configuration, multi-tenant isolation patterns, and cloud-native deployment artefacts.
 
-- **Execution Plans**: OpenTofu has a "planning" step where it generates an execution plan. The execution plan shows what OpenTofu will do when you call apply. This lets you avoid any surprises when OpenTofu manipulates infrastructure.
+---
 
-- **Resource Graph**: OpenTofu builds a graph of all your resources, and parallelizes the creation and modification of any non-dependent resources. Because of this, OpenTofu builds infrastructure as efficiently as possible, and operators get insight into dependencies in their infrastructure.
+## Upstream
 
-- **Change Automation**: Complex changesets can be applied to your infrastructure with minimal human interaction. With the previously mentioned execution plan and resource graph, you know exactly what OpenTofu will change and in what order, avoiding many possible human errors.
+- **Upstream project:** https://github.com/opentofu/opentofu
+- **Upstream licence:** MPL-2.0
+- **Our relationship:** Fork-and-extend. Upstream codebase is consumed verbatim under its original licence; our additions sit on top under CC BY 4.0.
 
-## Nightly Builds
+The merge discipline that governs how this repository absorbs upstream changes is documented in [`UPSTREAM-MERGE-DISCIPLINE.md`](UPSTREAM-MERGE-DISCIPLINE.md).
 
-Nightly builds are available for testing the latest changes on `main`. These are experimental and not intended for production use. Each build is removed after 30 days.
+---
 
-Nightly builds can be found at `https://nightlies.opentofu.org/nightlies`. For those who want to automate with tooling, `https://nightlies.opentofu.org/nightlies/latest.json` will be kept up to date with the latest build information.
+## Platforms
 
-For more details, see [RELEASE.md](RELEASE.md#nightly-builds).
+Windows · Linux · macOS · iOS · Android
 
-## Reporting security vulnerabilities
+---
 
-If you've found a vulnerability or a potential vulnerability in OpenTofu please follow [Security Policy](https://github.com/opentofu/opentofu/security/policy). We'll send a confirmation email to acknowledge your report, and we'll send an additional email when we've identified the issue positively or negatively.
+## Family — the four-repo pattern
 
-## Reporting possible copyright issues
+UniCORE.OpenTofu is published as a **four-repo family**:
 
-If you believe you have found any possible copyright or intellectual property issues, please contact liaison@opentofu.org. We'll send a confirmation email to acknowledge your report.
+- `bryanunitek/UniCORE.OpenTofu` — public on-prem-deployment-shape gift surface
+- `bryanunitek/UniSaaS.UniCORE.OpenTofu` — public SaaS-deployment-shape gift surface ← **this repo**
+- `bryanunitek/UniCORE.OpenTofu-Claw` (private) — on-prem-shape working repository
+- `bryanunitek/UniSaaS.UniCORE.OpenTofu-Claw` (private) — SaaS-shape working repository
 
-## Registry Access
+---
 
-In an effort to comply with applicable sanctions, we block access from specific countries of origin. For more details, see the [Registry Inclusion Policy](https://github.com/opentofu/registry/blob/main/POLICY.md).
+## Status
 
-## License
+**SCAFFOLD-ANCHOR** as of 2026-06-04. See [`STATUS.md`](STATUS.md) for the full status breakdown.
 
-[Mozilla Public License v2.0](https://github.com/opentofu/opentofu/blob/main/LICENSE)
+---
+
+## Files in this scaffold commit
+
+- [`README.md`](README.md) — this file
+- [`LICENSE.md`](LICENSE.md) — UniCORE additions licence
+- [`STATUS.md`](STATUS.md) — scaffold-anchor status
+- [`UPSTREAM-MERGE-DISCIPLINE.md`](UPSTREAM-MERGE-DISCIPLINE.md) — canonical merge discipline
+- [`AI-AUTHORSHIP.md`](AI-AUTHORSHIP.md) — AI authorship disclosure
+
+---
+
+## Related repositories — UniCORE programme
+
+**Foundation triad (gift, public, CC BY 4.0):**
+- [`UniVERSE`](https://github.com/bryanunitek/UniVERSE) — programme
+- [`TrueAI`](https://github.com/bryanunitek/TrueAI) — Foundation (Nine Invariants)
+- [`UniCORE-AI`](https://github.com/bryanunitek/UniCORE-AI) — reference architecture (12 Levels)
+
+**Implementation reference (deployment-shape pair):**
+- [`UniCORE`](https://github.com/bryanunitek/UniCORE) — on-prem-shape
+- [`UniSaaS.UniCORE`](https://github.com/bryanunitek/UniSaaS.UniCORE) — SaaS-shape
+
+**Substrate-services layer (deployment-shape pair):**
+- [`UniCORE.GVB`](https://github.com/bryanunitek/UniCORE.GVB) — on-prem-shape
+- [`UniSaaS.UniCORE.GVB`](https://github.com/bryanunitek/UniSaaS.UniCORE.GVB) — SaaS-shape
+
+---
+
+## Contact
+
+- **Public discussion:** [GitHub Discussions](https://github.com/bryanunitek/UniSaaS.UniCORE.OpenTofu/discussions)
+- **Private contact / connection request:** [LinkedIn — Bryan Fred](https://www.linkedin.com/in/bryan-fred-02209753/)
+
+---
+
+*Author: Bryan Fred, Unitek Systems Limited, Bedford, United Kingdom. Public. Given, not sold. Irrevocable.*
