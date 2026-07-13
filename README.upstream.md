@@ -14,7 +14,7 @@ OpenTofu is an OSS tool for building, changing, and versioning infrastructure sa
   - Open a [GitHub issue](https://github.com/opentofu/opentofu/issues/new/choose)
   - Join us in the [#opentofu channel on the CNCF Slack](https://opentofu.org/slack/)!
 - Want to contribute?
-  - Please read the [Contribution Guide](CONTRIBUTING.md).
+  - Please read the [Contribution Guide](https://git.unitek-systems.com/UniCORE/UniSaaS.UniCORE.OpenTofu/src/branch/main/CONTRIBUTING.md) (mirror: [GitHub](https://github.com/bryanunitek/UniSaaS.UniCORE.OpenTofu/blob/main/CONTRIBUTING.md)).
 - Recurring Events
   - [Community Meetings](https://meet.google.com/xfm-cgms-has) on Wednesdays at 12:30 UTC ([calendar](https://calendar.google.com/calendar/event?eid=NDg0aWl2Y3U1aHFva3N0bGhyMHBhNzdpZmsgY18zZjJkZDNjMWZlMGVmNGU5M2VmM2ZjNDU2Y2EyZGQyMTlhMmU4ZmQ4NWY2YjQwNzUwYWYxNmMzZGYzNzBiZjkzQGc))
   - [Technical Steering Committee Meetings](https://meet.google.com/cry-houa-qbk) every other Tuesday at 4pm UTC ([calendar](https://calendar.google.com/calendar/u/0/event?eid=M3JyMWtuYWptdXI0Zms4ZnJpNmppcDczb3RfMjAyNTA1MjdUMTYwMDAwWiBjXzNmMmRkM2MxZmUwZWY0ZTkzZWYzZmM0NTZjYTJkZDIxOWEyZThmZDg1ZjZiNDA3NTBhZjE2YzNkZjM3MGJmOTNAZw))
@@ -38,7 +38,7 @@ Nightly builds are available for testing the latest changes on `main`. These are
 
 Nightly builds can be found at `https://nightlies.opentofu.org/nightlies`. For those who want to automate with tooling, `https://nightlies.opentofu.org/nightlies/latest.json` will be kept up to date with the latest build information.
 
-For more details, see [RELEASE.md](RELEASE.md#nightly-builds).
+For more details, see [RELEASE.md](https://git.unitek-systems.com/UniCORE/UniSaaS.UniCORE.OpenTofu/src/branch/main/RELEASE.md#nightly-builds) (mirror: [GitHub](https://github.com/bryanunitek/UniSaaS.UniCORE.OpenTofu/blob/main/RELEASE.md#nightly-builds)).
 
 ## Reporting security vulnerabilities
 
