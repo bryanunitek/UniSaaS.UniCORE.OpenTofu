@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/command/workdir"
 
 	"github.com/opentofu/opentofu/internal/addrs"
@@ -29,13 +28,12 @@ func TestProvidersLock(t *testing.T) {
 		t.Chdir(td)
 
 		view, done := testView(t)
-		c := &ProvidersLockCommand{
-			Meta: Meta{
-				WorkingDir: workdir.NewDir("."),
-				View:       view,
-			},
+
+		meta := Meta{
+			WorkingDir: workdir.NewDir("."),
+			View:       view,
 		}
-		code := c.Run([]string{})
+		code := RunCommander(t, ProvidersLockCommander(), meta, []string{})
 		_ = done(t)
 		if code != 0 {
 			t.Fatalf("wrong exit code; expected 0, got %d", code)
@@ -93,16 +91,15 @@ func runProviderLockGenericTest(t *testing.T, testDirectory, expected string) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &ProvidersLockCommand{
-		Meta: Meta{
-			WorkingDir:       workdir.NewDir("."),
-			View:             view,
-			testingOverrides: metaOverridesForProvider(p),
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		View:             view,
+		testingOverrides: metaOverridesForProvider(p),
 	}
 
 	args := []string{"-fs-mirror=fs-mirror"}
-	code := c.Run(args)
+	code := RunCommander(t, ProvidersLockCommander(), meta, args)
 	_ = done(t)
 	if code != 0 {
 		t.Fatalf("wrong exit code; expected 0, got %d", code)
@@ -122,41 +119,40 @@ func TestProvidersLock_args(t *testing.T) {
 
 	t.Run("mirror collision", func(t *testing.T) {
 		view, done := testView(t)
-		c := &ProvidersLockCommand{
-			Meta: Meta{
-				WorkingDir: workdir.NewDir("."),
-				View:       view,
-			},
+
+		meta := Meta{
+			WorkingDir: workdir.NewDir("."),
+			View:       view,
 		}
 
 		// only one of these arguments can be used at a time
 		args := []string{
 			"-fs-mirror=/foo/",
 			"-net-mirror=www.foo.com",
+			"-oci-mirror=www.foo.com",
 		}
-		code := c.Run(args)
+		code := RunCommander(t, ProvidersLockCommander(), meta, args)
 		cmdOutput := done(t)
-		if code != cli.RunResultHelp {
+		if code != 1 {
 			t.Fatalf("wrong exit code; got %d", code)
 		}
 		output := cmdOutput.Stderr()
-		if !strings.Contains(output, "The -fs-mirror and -net-mirror command line options are mutually-exclusive.") {
+		if !strings.Contains(output, "The mirror command line options are mutually-exclusive.") {
 			t.Fatalf("missing expected error message: %s", output)
 		}
 	})
 
 	t.Run("invalid platform", func(t *testing.T) {
 		view, done := testView(t)
-		c := &ProvidersLockCommand{
-			Meta: Meta{
-				WorkingDir: workdir.NewDir("."),
-				View:       view,
-			},
+
+		meta := Meta{
+			WorkingDir: workdir.NewDir("."),
+			View:       view,
 		}
 
 		// not a valid platform
 		args := []string{"-no-color", "-platform=arbitrary_nonsense_that_isnt_valid"}
-		code := c.Run(args)
+		code := RunCommander(t, ProvidersLockCommander(), meta, args)
 		cmdOutput := done(t)
 		if code != 1 {
 			t.Fatalf("wrong exit code; expected 1, got %d", code)
@@ -169,16 +165,15 @@ func TestProvidersLock_args(t *testing.T) {
 
 	t.Run("invalid provider argument", func(t *testing.T) {
 		view, done := testView(t)
-		c := &ProvidersLockCommand{
-			Meta: Meta{
-				WorkingDir: workdir.NewDir("."),
-				View:       view,
-			},
+
+		meta := Meta{
+			WorkingDir: workdir.NewDir("."),
+			View:       view,
 		}
 
 		// There is no configuration, so it's not valid to use any provider argument
 		args := []string{"-no-color", "hashicorp/random"}
-		code := c.Run(args)
+		code := RunCommander(t, ProvidersLockCommander(), meta, args)
 		cmdOutput := done(t)
 		if code != 1 {
 			t.Fatalf("wrong exit code; expected 1, got %d", code)

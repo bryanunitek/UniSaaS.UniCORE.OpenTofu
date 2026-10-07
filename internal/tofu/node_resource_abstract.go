@@ -522,6 +522,11 @@ func (n *NodeAbstractResource) AttachResourceConfig(c *configs.Resource) {
 	n.Config = c
 }
 
+// GraphNodeAttachResourceConfig
+func (n *NodeAbstractResource) ResourceConfig() *configs.Resource {
+	return n.Config
+}
+
 // GraphNodeAttachResourceSchema impl
 func (n *NodeAbstractResource) AttachResourceSchema(schema *configschema.Block, version uint64) {
 	n.Schema = schema
@@ -602,8 +607,8 @@ func (n *NodeAbstractResource) writeResourceState(ctx context.Context, evalCtx E
 	return diags
 }
 
-func isResourceMovedToDifferentType(newAddr, oldAddr addrs.AbsResourceInstance) bool {
-	return newAddr.Resource.Resource.Type != oldAddr.Resource.Resource.Type
+func isResourceMovedToDifferentType(newAddr, oldAddr addrs.AbsResourceInstance, providerAddr, oldProviderAddr addrs.Provider) bool {
+	return newAddr.Resource.Resource.Type != oldAddr.Resource.Resource.Type || !providerAddr.Equals(oldProviderAddr)
 }
 
 // readResourceInstanceState reads the current object for a specific instance in
@@ -632,15 +637,18 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceState(ctx context.Con
 
 	// prevAddr will match the newAddr if the resource wasn't moved (prevRunAddr checks move results)
 	prevAddr := n.prevRunAddr(evalCtx)
+	providerAddr, prevProviderAddr := n.getResourceProviderAddrs(evalCtx, addr)
 	transformArgs := stateTransformArgs{
 		currentAddr:          addr,
+		currentProviderAddr:  providerAddr,
 		prevAddr:             prevAddr,
+		prevProviderAddr:     prevProviderAddr,
 		provider:             provider,
 		objectSrc:            src,
 		currentSchema:        schema.Block,
 		currentSchemaVersion: currentVersion,
 	}
-	if isResourceMovedToDifferentType(addr, prevAddr) {
+	if evalCtx.MoveResults().AddrMovedExplicit(addr) && isResourceMovedToDifferentType(addr, prevAddr, providerAddr, prevProviderAddr) {
 		src, diags = moveResourceState(transformArgs)
 	} else {
 		src, diags = upgradeResourceState(transformArgs)
@@ -648,7 +656,7 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceState(ctx context.Con
 
 	// Upgrade identity if needed
 	if src != nil && src.IdentityJSON != nil {
-		src, diags = upgradeResourceIdentity(ctx, addr, src, provider, providerSchema, diags)
+		src, diags = upgradeResourceIdentity(ctx, addr, src, provider, prevProviderAddr, providerSchema, diags)
 	}
 
 	if n.Config != nil {
@@ -664,6 +672,18 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceState(ctx context.Con
 	}
 
 	return obj, diags
+}
+
+func (n *NodeAbstractResourceInstance) getResourceProviderAddrs(evalCtx EvalContext, addr addrs.AbsResourceInstance) (addrs.Provider, addrs.Provider) {
+	// temporarily set prevProviderAddr to the current one,
+	// and use it if prevRunState is not set in this context
+	providerAddr := n.Provider()
+	prevProviderAddr := providerAddr
+	prevRunState := evalCtx.PrevRunState()
+	if prevRunState != nil {
+		prevProviderAddr = prevRunState.ResourceProvider(addr.AffectedAbsResource()).Provider
+	}
+	return providerAddr, prevProviderAddr
 }
 
 // readResourceInstanceStateDeposed reads the deposed object for a specific
@@ -696,15 +716,18 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceStateDeposed(ctx cont
 	}
 	// prevAddr will match the newAddr if the resource wasn't moved (prevRunAddr checks move results)
 	prevAddr := n.prevRunAddr(evalCtx)
+	providerAddr, prevProviderAddr := n.getResourceProviderAddrs(evalCtx, addr)
 	transformArgs := stateTransformArgs{
 		currentAddr:          addr,
+		currentProviderAddr:  providerAddr,
 		prevAddr:             prevAddr,
+		prevProviderAddr:     prevProviderAddr,
 		provider:             provider,
 		objectSrc:            src,
 		currentSchema:        schema.Block,
 		currentSchemaVersion: currentVersion,
 	}
-	if isResourceMovedToDifferentType(addr, prevAddr) {
+	if evalCtx.MoveResults().AddrMovedExplicit(addr) && isResourceMovedToDifferentType(addr, prevAddr, providerAddr, prevProviderAddr) {
 		src, diags = moveResourceState(transformArgs)
 	} else {
 		src, diags = upgradeResourceState(transformArgs)
@@ -712,7 +735,7 @@ func (n *NodeAbstractResourceInstance) readResourceInstanceStateDeposed(ctx cont
 
 	// Upgrade identity if needed
 	if src != nil && src.IdentityJSON != nil {
-		src, diags = upgradeResourceIdentity(ctx, addr, src, provider, providerSchema, diags)
+		src, diags = upgradeResourceIdentity(ctx, addr, src, provider, prevProviderAddr, providerSchema, diags)
 	}
 
 	if n.Config != nil {

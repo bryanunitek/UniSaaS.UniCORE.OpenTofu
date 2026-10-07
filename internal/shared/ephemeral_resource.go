@@ -19,14 +19,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-type EphemeralResourceHooks struct {
-	PreOpen   func(addrs.AbsResourceInstance)
-	PostOpen  func(addrs.AbsResourceInstance, tfdiags.Diagnostics)
-	PreRenew  func(addrs.AbsResourceInstance)
-	PostRenew func(addrs.AbsResourceInstance, tfdiags.Diagnostics)
-	PreClose  func(addrs.AbsResourceInstance)
-	PostClose func(addrs.AbsResourceInstance, tfdiags.Diagnostics)
-}
+// This may be modified to expedite tests
+var EphemeralResourceCloseTimeout = 10 * time.Second
 
 type EphemeralCloseFunc func(context.Context) tfdiags.Diagnostics
 
@@ -38,10 +32,11 @@ func OpenEphemeralResourceInstance(
 	providerAddr addrs.AbsProviderInstanceCorrect,
 	provider providers.Interface,
 	configVal cty.Value,
-	hooks EphemeralResourceHooks,
 ) (cty.Value, EphemeralCloseFunc, tfdiags.Diagnostics) {
 	var newVal cty.Value
 	var diags tfdiags.Diagnostics
+
+	tracer := contextTracer(ctx)
 
 	// Unmark before sending to provider, will re-mark before returning
 	configVal, pvm := configVal.UnmarkDeepWithPaths()
@@ -63,17 +58,21 @@ func OpenEphemeralResourceInstance(
 	// to actually call the provider to open the ephemeral resource.
 	log.Printf("[TRACE] OpenEphemeralResourceInstance: %s configuration is complete, so calling the provider", addr)
 
-	if hooks.PreOpen != nil {
-		hooks.PreOpen(addr)
+	openCtx := ctx
+	if cb := tracer.StartEphemeralResourceInstanceOpen; cb != nil {
+		openCtx = cb(ctx, addr)
 	}
 
 	openReq := providers.OpenEphemeralResourceRequest{
 		TypeName: addr.ContainingResource().Resource.Type,
 		Config:   configVal,
 	}
-	openResp := provider.OpenEphemeralResource(ctx, openReq)
+	openResp := provider.OpenEphemeralResource(openCtx, openReq)
 	diags = diags.Append(openResp.Diagnostics)
 	if diags.HasErrors() {
+		if cb := tracer.EndEphemeralResourceInstanceOpen; cb != nil {
+			cb(openCtx, addr, diags)
+		}
 		return newVal, nil, diags
 	}
 
@@ -120,9 +119,16 @@ func OpenEphemeralResourceInstance(
 		}
 	}()
 
+	if cb := tracer.EndEphemeralResourceInstanceOpen; cb != nil {
+		cb(openCtx, addr, diags)
+	}
+
 	if diags.HasErrors() {
 		// We have an open ephemeral resource, but don't plan to use it due to validation errors
 		// It needs to be closed before we can return
+		// TODO: We should probably call
+		// tracer.StartEphemeralResourceInstanceClose and
+		// tracer.EndEphemeralResourceInstanceClose around this early close.
 
 		closReq := providers.CloseEphemeralResourceRequest{
 			TypeName: addr.Resource.Resource.Type,
@@ -139,14 +145,14 @@ func OpenEphemeralResourceInstance(
 		newVal = newVal.MarkWithPaths(pvm)
 	}
 
-	if hooks.PostOpen != nil {
-		hooks.PostOpen(addr, diags)
-	}
-
 	// Initialize the closing channel and the channel that sends diagnostics back to the close caller.
 	closeCh := make(chan context.Context, 1)
 	diagsCh := make(chan tfdiags.Diagnostics, 1)
 	go func() {
+		// The writer is responsible with closing the channel, not the receiver.
+		defer func() {
+			close(diagsCh)
+		}()
 		var diags tfdiags.Diagnostics
 		renewAt := openResp.RenewAt
 		privateData := openResp.Private
@@ -170,23 +176,24 @@ func OpenEphemeralResourceInstance(
 				}
 				select {
 				case <-waitForRenewal():
-					if hooks.PreRenew != nil {
-						hooks.PreRenew(addr)
+					renewCtx := ctx
+					if cb := tracer.StartEphemeralResourceInstanceRenew; cb != nil {
+						renewCtx = cb(ctx, addr)
 					}
 
 					renewReq := providers.RenewEphemeralResourceRequest{
 						TypeName: addr.Resource.Resource.Type,
 						Private:  privateData,
 					}
-					renewResp := provider.RenewEphemeralResource(ctx, renewReq)
+					renewResp := provider.RenewEphemeralResource(renewCtx, renewReq)
 					diags = diags.Append(renewResp.Diagnostics)
 
 					// TODO consider what happens if renew fails, do we still want to update private?
 					renewAt = renewResp.RenewAt
-					if hooks.PostRenew != nil {
-						hooks.PostRenew(addr, diags)
-					}
 					privateData = renewResp.Private
+					if cb := tracer.EndEphemeralResourceInstanceRenew; cb != nil {
+						cb(renewCtx, addr, diags)
+					}
 				case closeCtx = <-closeCh:
 					return
 				case <-ctx.Done():
@@ -197,8 +204,8 @@ func OpenEphemeralResourceInstance(
 			}
 		}()
 
-		if hooks.PreClose != nil {
-			hooks.PreClose(addr)
+		if cb := tracer.StartEphemeralResourceInstanceClose; cb != nil {
+			closeCtx = cb(closeCtx, addr)
 		}
 
 		closReq := providers.CloseEphemeralResourceRequest{
@@ -208,21 +215,22 @@ func OpenEphemeralResourceInstance(
 		closeResp := provider.CloseEphemeralResource(closeCtx, closReq)
 		diags = diags.Append(closeResp.Diagnostics)
 
-		if hooks.PostClose != nil {
-			hooks.PostClose(addr, diags)
+		if cb := tracer.EndEphemeralResourceInstanceClose; cb != nil {
+			cb(closeCtx, addr, diags)
 		}
 
-		diagsCh <- diags
+		select {
+		case diagsCh <- diags:
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("[ERROR] OpenEphemeralResourceInstance: Diagnostics not sent fully after closing ephemeral %s", diags)
+		}
 	}()
 
 	closeFunc := func(ctx context.Context) tfdiags.Diagnostics {
 		closeCh <- ctx
 		close(closeCh)
-		defer func() {
-			close(diagsCh)
-		}()
 
-		timeout := 10 * time.Second
+		timeout := EphemeralResourceCloseTimeout
 		select {
 		case d := <-diagsCh:
 			return d

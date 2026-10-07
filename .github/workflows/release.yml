@@ -126,6 +126,9 @@ jobs:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_TOKEN }}
           RELEASE_FLAG_LATEST: ${{ inputs.latest }}
           RELEASE_FLAG_PRERELEASE: ${{ inputs.prerelease }}
+          # This causes version.IsOfficialBuild to return true when someone is
+          # running one of our official release builds.
+          BUILD_OPENTOFU_OFFICIAL: '1'
 
       - name: Remove GPG key
         if: always()
@@ -159,3 +162,4 @@ jobs:
                 PACKAGECLOUD-REPONAME: tofu
                 PACKAGECLOUD-DISTRO: rpm_any/rpm_any
                 PACKAGECLOUD-TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
+

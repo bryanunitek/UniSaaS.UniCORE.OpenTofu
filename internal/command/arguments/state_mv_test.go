@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseStateMv_basicValidation(t *testing.T) {
@@ -46,7 +48,7 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 		"custom state path": {
 			args: []string{"-state=/path/to/state.tfstate", "source", "dest"},
 			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
-				stateMv.StatePath = "/path/to/state.tfstate"
+				stateMv.State.StatePath = "/path/to/state.tfstate"
 				stateMv.RawSrcAddr = "source"
 				stateMv.RawDestAddr = "dest"
 			}),
@@ -54,7 +56,7 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 		"custom state-out path": {
 			args: []string{"-state-out=/path/to/state-out.tfstate", "source", "dest"},
 			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
-				stateMv.StateOutPath = "/path/to/state-out.tfstate"
+				stateMv.State.StateOutPath = "/path/to/state-out.tfstate"
 				stateMv.RawSrcAddr = "source"
 				stateMv.RawDestAddr = "dest"
 			}),
@@ -62,7 +64,7 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 		"custom backup path": {
 			args: []string{"-backup=/path/to/backup.tfstate", "source", "dest"},
 			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
-				stateMv.BackupPath = "/path/to/backup.tfstate"
+				stateMv.State.BackupPath = "/path/to/backup.tfstate"
 				stateMv.RawSrcAddr = "source"
 				stateMv.RawDestAddr = "dest"
 			}),
@@ -71,7 +73,7 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 			args: []string{"-lock-timeout=10s", "source", "dest"},
 			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
 				// do not set `stateMv.State.Lock = true` since it's meant to be true already
-				stateMv.Backend.StateLockTimeout = 10 * time.Second
+				stateMv.State.LockTimeout = 10 * time.Second
 				stateMv.RawSrcAddr = "source"
 				stateMv.RawDestAddr = "dest"
 			}),
@@ -79,7 +81,7 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 		"disable locking": {
 			args: []string{"-lock=false", "source", "dest"},
 			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
-				stateMv.Backend.StateLock = false
+				stateMv.State.Lock = false
 				stateMv.RawSrcAddr = "source"
 				stateMv.RawDestAddr = "dest"
 			}),
@@ -94,42 +96,48 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 				"-lock-timeout=15s",
 				"-lock=true",
 				"-var=key=value",
+				"-ignore-remote-version=true",
 				"source",
 				"dest",
 			},
 			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
 				stateMv.DryRun = true
 				stateMv.BackupPathOut = "/path/to/backup-out.tfstate"
-				stateMv.StatePath = "/path/to/state.tfstate"
-				stateMv.StateOutPath = "/path/to/state-out.tfstate"
-				stateMv.BackupPath = "/path/to/backup.tfstate"
-				stateMv.Backend.StateLockTimeout = 15 * time.Second
-				stateMv.Backend.StateLock = true
+				stateMv.State.StatePath = "/path/to/state.tfstate"
+				stateMv.State.StateOutPath = "/path/to/state-out.tfstate"
+				stateMv.State.BackupPath = "/path/to/backup.tfstate"
+				stateMv.State.LockTimeout = 15 * time.Second
+				stateMv.State.Lock = true
 				stateMv.RawSrcAddr = "source"
 				stateMv.RawDestAddr = "dest"
-				// Vars would be updated, but we ignore it in cmp
+				stateMv.Backend.IgnoreRemoteVersion = true
+				stateMv.Vars = &Vars{{Name: "-var", Value: "key=value"}}
 			}),
 		},
 		"no arguments": {
 			args:        []string{},
 			want:        stateMvArgsWithDefaults(nil),
-			wantErrText: "Invalid number of arguments",
+			wantErrText: "Expected exactly two positional arguments",
 		},
 		"only one argument": {
-			args:        []string{"source"},
-			want:        stateMvArgsWithDefaults(nil),
-			wantErrText: "Invalid number of arguments",
+			args: []string{"source"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.RawSrcAddr = "source"
+			}),
+			wantErrText: "Expected exactly two positional arguments",
 		},
 		"too many arguments": {
-			args:        []string{"source", "dest", "extra"},
-			want:        stateMvArgsWithDefaults(nil),
-			wantErrText: "Invalid number of arguments",
+			args: []string{"source", "dest", "extra"},
+			want: stateMvArgsWithDefaults(func(stateMv *StateMv) {
+				stateMv.RawSrcAddr = "source"
+				stateMv.RawDestAddr = "dest"
+			}),
+			wantErrText: "Expected exactly two positional arguments.",
 		},
 	}
 
 	cmpOpts := cmp.Options{
-		cmpopts.IgnoreUnexported(Vars{}, ViewOptions{}, State{}),
-		cmpopts.IgnoreFields(ViewOptions{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
 	}
 
 	for name, tc := range testCases {
@@ -157,19 +165,24 @@ func TestParseStateMv_basicValidation(t *testing.T) {
 func stateMvArgsWithDefaults(mutate func(stateMv *StateMv)) *StateMv {
 	ret := &StateMv{
 		DryRun:        false,
-		BackupPath:    "-",
 		BackupPathOut: "-",
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: false,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
-		Backend: Backend{
+		Backend: &Backend{
 			IgnoreRemoteVersion: false,
-			StateLock:           true,
-			StateLockTimeout:    0,
+		},
+		State: &State{
+			Lock: true,
 		},
 		Vars: &Vars{},
 	}
+	// Because the default value is different on this command
+	ret.State.BackupPath = "-"
 	if mutate != nil {
 		mutate(ret)
 	}

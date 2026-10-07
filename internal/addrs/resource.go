@@ -278,6 +278,14 @@ func (r AbsResource) UniqueKey() UniqueKey {
 	return absResourceKey(r.String())
 }
 
+func (r AbsResource) Noun() string {
+	return "resource"
+}
+
+func (r AbsResource) ShortNoun() string {
+	return "resource"
+}
+
 // AbsResourceInstance is an absolute address for a resource instance under a
 // given module path.
 type AbsResourceInstance struct {
@@ -378,7 +386,7 @@ func (r AbsResourceInstance) CheckRule(t CheckRuleType, i int) CheckRule {
 	}
 }
 
-func (v AbsResourceInstance) CheckableKind() CheckableKind {
+func (r AbsResourceInstance) CheckableKind() CheckableKind {
 	return CheckableResource
 }
 
@@ -420,6 +428,14 @@ func (r AbsResourceInstance) absMoveableSigil() {
 	// AbsResourceInstance is moveable
 }
 
+func (r AbsResourceInstance) Noun() string {
+	return "resource instance"
+}
+
+func (r AbsResourceInstance) ShortNoun() string {
+	return "instance"
+}
+
 // ConfigResource is an address for a resource within a configuration.
 type ConfigResource struct {
 	targetable
@@ -448,6 +464,16 @@ func ParseConfigResource(traversal hcl.Traversal) (ConfigResource, tfdiags.Diagn
 
 	configRes, moreDiags := parseResourceUnderModule(modulePath, remainTraversal)
 	return configRes, diags.Append(moreDiags)
+}
+
+// MustParseResourceAddr is used to parse a string representation of a resource address to a ConfigResource.
+// Meant to be used only in tests since this panics if the parsing fails.
+func MustParseResourceAddr(s string) ConfigResource {
+	addr, diags := ParseAbsResourceStr(s)
+	if diags.HasErrors() {
+		panic(diags.Err())
+	}
+	return addr.Config()
 }
 
 // Resource returns the address of a particular resource within the module.
@@ -514,7 +540,7 @@ func (r ConfigResource) configCheckableSigil() {
 	// ConfigResource represents a configuration object that declares checkable objects
 }
 
-func (v ConfigResource) CheckableKind() CheckableKind {
+func (r ConfigResource) CheckableKind() CheckableKind {
 	return CheckableResource
 }
 

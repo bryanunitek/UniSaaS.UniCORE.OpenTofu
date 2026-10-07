@@ -30,7 +30,7 @@ type Import interface {
 }
 
 // NewImport returns an initialized Import implementation for the given ViewType.
-func NewImport(args arguments.ViewOptions, view *View) Import {
+func NewImport(args *arguments.View, view *View) Import {
 	var ret Import
 	switch args.ViewType {
 	case arguments.ViewJSON:
@@ -165,7 +165,7 @@ func (v *ImportHuman) Hooks() []tofu.Hook {
 }
 
 func (v *ImportHuman) Operation() Operation {
-	return NewOperation(arguments.ViewHuman, v.view.runningInAutomation, v.view)
+	return NewOperation(arguments.ViewHuman, v.view)
 }
 
 func (v *ImportHuman) Backend() Backend {

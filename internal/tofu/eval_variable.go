@@ -119,15 +119,13 @@ func prepareFinalInputVariableValue(addr addrs.AbsInputVariableInstance, raw *In
 		given = defaultVal // must be set, because we checked above that the variable isn't required
 	}
 
-	// Apply defaults from the variable's type constraint to the converted value,
-	// unless the converted value is null. We do not apply defaults to top-level
-	// null values, as doing so could prevent assigning null to a nullable
-	// variable.
-	if cfg.TypeDefaults != nil && !given.IsNull() {
-		given = cfg.TypeDefaults.Apply(given)
-	}
-
-	val, err := convert.Convert(given, convertTy)
+	// We currently reconstruct a [lang.TypeConversionConstraint] here just
+	// temporarily to call ConvertValue on it, because the representation in
+	// [configs.Variable] long predates this wrapper type.
+	// TODO: Consider changing configs.Variable to use TypeConversionConstraint
+	// directly in its own representation.
+	convertTarget := lang.NewTypeConversionConstraint(convertTy, cfg.TypeDefaults)
+	val, err := convertTarget.ConvertValue(given)
 	if err != nil {
 		log.Printf("[ERROR] prepareFinalInputVariableValue: %s has unsuitable type\n  got:  %s\n  want: %s", addr, given.Type(), convertTy)
 		var detail string
@@ -539,8 +537,7 @@ func evalVariableDeprecation(
 	addr addrs.AbsInputVariableInstance,
 	config *configs.Variable,
 	expr hcl.Expression,
-	ctx EvalContext,
-	variableFromRemoteModule bool) tfdiags.Diagnostics {
+	ctx EvalContext) tfdiags.Diagnostics {
 	if config.Deprecated == "" {
 		log.Printf("[TRACE] evalVariableDeprecation: variable %q does not have deprecation configured", addr)
 		return nil
@@ -562,48 +559,6 @@ func evalVariableDeprecation(
 		Summary:  `Variable marked as deprecated by the module author`,
 		Detail:   fmt.Sprintf("Variable %q is marked as deprecated with the following message:\n%s", config.Name, config.Deprecated),
 		Subject:  expr.Range().Ptr(),
-		Extra: VariableDeprecationCause{
-			// Used to identify the input on the consolidation diagnostics and
-			// make sure they are showed separately, by using the address of the
-			// module variable. Since these always be different, variables won't consolidate,
-			// but after we have a reliable way to get the address on remote modules, we can consolidate them.
-			Key:                fmt.Sprintf("%s\n%s", config.Name, config.Deprecated),
-			IsFromRemoteModule: variableFromRemoteModule,
-		},
+		Extra:    marks.DeprecationCauseVariable(addr, config.Deprecated),
 	})
-}
-
-// diagnosticExtraVariableDeprecationCause is defining the contract a struct needs to fulfill
-// to be able to mark a diagnostic as one carrying information about a deprecated variable.
-type diagnosticExtraVariableDeprecationCause interface {
-	diagnosticDeprecationCause() VariableDeprecationCause
-}
-
-// DiagnosticVariableDeprecationCause checks whether the given diagnostic is
-// a deprecation warning, and if so returns the deprecation cause and
-// true. If not, returns the zero value of DeprecationCause and false.
-func DiagnosticVariableDeprecationCause(diag tfdiags.Diagnostic) (VariableDeprecationCause, bool) {
-	maybe := tfdiags.ExtraInfo[diagnosticExtraVariableDeprecationCause](diag)
-	if maybe == nil {
-		return VariableDeprecationCause{}, false
-	}
-	return maybe.diagnosticDeprecationCause(), true
-}
-
-// VariableDeprecationCause is just a container that it holds the flag that the deprecated variable was marked with.
-// This flag is going to be used later to decide on showing this diagnostic or not based on the level that the user
-// has provided in the CLI args.
-type VariableDeprecationCause struct {
-	IsFromRemoteModule bool
-	Key                string
-}
-
-// ExtraInfoKey returns the key used for consolidation of deprecation diagnostics.
-func (c VariableDeprecationCause) ExtraInfoKey() string {
-	return c.Key
-}
-
-// VariableDeprecationCause implements diagnosticExtraVariableDeprecationCause
-func (c VariableDeprecationCause) diagnosticDeprecationCause() VariableDeprecationCause {
-	return c
 }

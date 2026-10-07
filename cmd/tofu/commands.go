@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/mitchellh/cli"
+	"github.com/opentofu/opentofu/internal/command/system"
 	"github.com/opentofu/opentofu/internal/command/workdir"
 	"github.com/opentofu/svchost"
 	"github.com/opentofu/svchost/disco"
@@ -52,7 +53,7 @@ var primaryCommands []string
 // hiddenCommands set, because that would be rather silly.
 var hiddenCommands map[string]struct{}
 
-func initCommands(
+func makeMeta(
 	ctx context.Context,
 	wd *workdir.Dir,
 	view *views.View,
@@ -62,7 +63,7 @@ func initCommands(
 	providerSrc getproviders.Source,
 	providerDevOverrides map[addrs.Provider]getproviders.PackageLocalDir,
 	unmanagedProviders map[addrs.Provider]*plugin.ReattachConfig,
-) {
+) command.Meta {
 	var inAutomation bool
 	if v := os.Getenv(runningInAutomationEnvName); v != "" {
 		inAutomation = true
@@ -83,18 +84,19 @@ func initCommands(
 		configDir = "" // No config dir available (e.g. looking up a home directory failed)
 	}
 
-	meta := command.Meta{
+	return command.Meta{
 		WorkingDir: wd,
 		View:       view.SetRunningInAutomation(inAutomation),
-
-		GlobalPluginDirs: globalPluginDirs(),
+		SystemCfg: system.Config{
+			RunningInAutomation:       inAutomation,
+			CLIConfigDir:              configDir,
+			PluginCacheDir:            config.PluginCacheDir,
+			GlobalPluginDirs:          globalPluginDirs(),
+			E2ETestingFeaturesEnabled: e2eTestingFeaturesEnabled(),
+		},
 
 		Services:        services,
 		BrowserLauncher: browserLauncher(),
-
-		RunningInAutomation: inAutomation,
-		CLIConfigDir:        configDir,
-		PluginCacheDir:      config.PluginCacheDir,
 
 		PluginCacheMayBreakDependencyLockFile: config.PluginCacheMayBreakDependencyLockFile,
 
@@ -112,14 +114,18 @@ func initCommands(
 		ProviderDevOverrides: providerDevOverrides,
 		UnmanagedProviders:   unmanagedProviders,
 
-		AllowExperimentalFeatures: experimentsAreAllowed(),
+		// OCICredentialsPolicyBuilder is passed here for some commands (e.g. providers lock) that cannot
+		// use ProvidersSource but still might need OCICredentials provided by the config
+		OCICredentialsPolicyBuilder: config.OCICredentialsPolicy,
 
 		// ProviderSourceLocationConfig is used for some commands that do not make
 		// use of the OpenTofu configuration files. Therefore, there is no way to configure
 		// the retries from other places than env vars.
 		ProviderSourceLocationConfig: providerSourceLocationConfigFromEnv(),
 	}
+}
 
+func initCommands(meta command.Meta) {
 	// The command list is included in the tofu -help
 	// output, which is in turn included in the docs at
 	// website/docs/cli/commands/index.html.markdown; if you
@@ -374,14 +380,14 @@ func initCommands(
 
 		"state list": func() (cli.Command, error) {
 			return &command.StateListCommand{
-				Meta: meta,
+				StateMeta: command.StateMeta{Meta: meta},
 			}, nil
 		},
 
 		"state ls": func() (cli.Command, error) {
 			return &command.AliasCommand{
 				Command: &command.StateListCommand{
-					Meta: meta,
+					StateMeta: command.StateMeta{Meta: meta},
 				},
 			}, nil
 		},
@@ -424,19 +430,19 @@ func initCommands(
 
 		"state pull": func() (cli.Command, error) {
 			return &command.StatePullCommand{
-				Meta: meta,
+				StateMeta: command.StateMeta{Meta: meta},
 			}, nil
 		},
 
 		"state push": func() (cli.Command, error) {
 			return &command.StatePushCommand{
-				Meta: meta,
+				StateMeta: command.StateMeta{Meta: meta},
 			}, nil
 		},
 
 		"state show": func() (cli.Command, error) {
 			return &command.StateShowCommand{
-				Meta: meta,
+				StateMeta: command.StateMeta{Meta: meta},
 			}, nil
 		},
 

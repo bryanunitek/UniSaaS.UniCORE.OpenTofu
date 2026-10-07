@@ -15,84 +15,66 @@ type Output struct {
 	// outputs.
 	Name string
 
-	// StatePath is an optional path to a state file, from which outputs will
-	// be loaded.
-	StatePath string
+	// View represents the global view options
+	View *View
+	// Vars and State are the common extended flags
+	Vars  *Vars
+	State *State
+}
 
-	// ViewOptions specifies which view options to use
-	ViewOptions ViewOptions
+// BindOutput registers CLI arguments, returning a Output value and it's corresponding hooks.
+func BindOutput(cli *CommandLine) *Output {
+	output := Output{
+		View:  BindView(cli, viewFlagNoInput|viewFlagSensitive),
+		Vars:  BindVars(cli),
+		State: BindState(cli, stateFlagStateIn),
+	}
 
-	Vars *Vars
+	rawOutput := false
+	cli.BoolVar(&rawOutput, "raw", false, `For value types that can be automatically converted to a string, will print the raw string directly, rather than a human-oriented representation of the value.
 
-	// ShowSensitive is used to display the value of variables marked as sensitive.
-	ShowSensitive bool
+Use this with care when stdout is a terminal and when the output value might contain control characters.`)
+
+	cli.ArgHelp = "The output command expects exactly one argument with the name of an output variable or no arguments to show all outputs."
+	cli.PositionalArg(&output.Name, "NAME", true)
+
+	cli.PreHook(func() tfdiags.Diagnostics {
+		var diags tfdiags.Diagnostics
+		if rawOutput {
+			jsonSet := output.View.ViewType == ViewJSON
+			output.View.ViewType = ViewRaw
+			if jsonSet {
+				diags = diags.Append(tfdiags.Sourceless(
+					tfdiags.Error,
+					"Invalid output format",
+					"The -raw and -json options are mutually-exclusive.",
+				))
+
+				// Since the desired output format is unknowable, fall back to default
+				output.View.ViewType = ViewHuman
+				rawOutput = false
+			}
+		}
+
+		if rawOutput && output.Name == "" {
+			diags = diags.Append(tfdiags.Sourceless(
+				tfdiags.Error,
+				"Output name required",
+				"You must give the name of a single output value when using the -raw option.",
+			))
+		}
+		return diags
+	})
+
+	return &output
 }
 
 // ParseOutput processes CLI arguments, returning an Output value, a closer function, and errors.
 // If errors are encountered, an Output value is still returned representing
 // the best effort interpretation of the arguments.
 func ParseOutput(args []string) (*Output, func(), tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-	output := &Output{
-		Vars: &Vars{},
-	}
-
-	var rawOutput bool
-	var statePath string
-	cmdFlags := extendedFlagSet("output", nil, nil, output.Vars)
-	cmdFlags.BoolVar(&rawOutput, "raw", false, "raw")
-	cmdFlags.StringVar(&statePath, "state", "", "path")
-	cmdFlags.BoolVar(&output.ShowSensitive, "show-sensitive", false, "displays sensitive values")
-
-	output.ViewOptions.AddFlags(cmdFlags, false)
-
-	if err := cmdFlags.Parse(args); err != nil {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Failed to parse command-line flags",
-			err.Error(),
-		))
-	}
-
-	args = cmdFlags.Args()
-	if len(args) > 1 {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Unexpected argument",
-			"The output command expects exactly one argument with the name of an output variable or no arguments to show all outputs.",
-		))
-	}
-
-	closer, moreDiags := output.ViewOptions.Parse()
-	diags = diags.Append(moreDiags)
-	if rawOutput {
-		output.ViewOptions.ViewType = ViewRaw
-		if output.ViewOptions.jsonFlag {
-			diags = diags.Append(tfdiags.Sourceless(
-				tfdiags.Error,
-				"Invalid output format",
-				"The -raw and -json options are mutually-exclusive.",
-			))
-
-			// Since the desired output format is unknowable, fall back to default
-			output.ViewOptions.ViewType = ViewHuman
-			rawOutput = false
-		}
-	}
-
-	output.StatePath = statePath
-
-	if len(args) > 0 {
-		output.Name = args[0]
-	}
-
-	if rawOutput && output.Name == "" {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Output name required",
-			"You must give the name of a single output value when using the -raw option.",
-		))
-	}
-
+	cli := new(CommandLine)
+	output := BindOutput(cli)
+	closer, diags := cli.parseWithHooks("output", args)
 	return output, closer, diags
 }

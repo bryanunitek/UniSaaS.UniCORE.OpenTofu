@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseWorkspaceDelete_viewOptions(t *testing.T) {
@@ -44,8 +45,8 @@ func TestParseWorkspaceDelete_viewOptions(t *testing.T) {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
 
-			if got.ViewOptions.ViewType != tc.wantViewType {
-				t.Errorf("ViewOptions.ViewType = %v, want %v", got.ViewOptions.ViewType, tc.wantViewType)
+			if got.View.ViewType != tc.wantViewType {
+				t.Errorf("View.ViewType = %v, want %v", got.View.ViewType, tc.wantViewType)
 			}
 		})
 	}
@@ -73,19 +74,17 @@ func TestParseWorkspaceDelete_basicValidation(t *testing.T) {
 			[]string{"-lock=false", "target-ws"},
 			workspaceDeleteArgsWithDefaults(func(in *WorkspaceDelete) {
 				in.WorkspaceName = "target-ws"
-				in.StateLock = false
+				in.State.Lock = false
 			}),
 		},
 		"lock timeout flag": {
 			[]string{"-lock-timeout=2s", "target-ws"},
 			workspaceDeleteArgsWithDefaults(func(in *WorkspaceDelete) {
 				in.WorkspaceName = "target-ws"
-				in.StateLockTimeout = 2 * time.Second
+				in.State.LockTimeout = 2 * time.Second
 			}),
 		},
 	}
-
-	cmpOpts := cmpopts.IgnoreUnexported(Vars{}, ViewOptions{})
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -95,7 +94,7 @@ func TestParseWorkspaceDelete_basicValidation(t *testing.T) {
 			if len(diags) > 0 {
 				t.Fatalf("unexpected diags: %v", diags)
 			}
-			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("unexpected result\n%s", diff)
 			}
 		})
@@ -163,12 +162,16 @@ func TestParseWorkspaceDelete_vars(t *testing.T) {
 
 func workspaceDeleteArgsWithDefaults(mutate func(in *WorkspaceDelete)) *WorkspaceDelete {
 	ret := &WorkspaceDelete{
-		Force:            false,
-		StateLock:        true,
-		StateLockTimeout: 0,
-		Vars:             &Vars{},
-		ViewOptions: ViewOptions{
-			ViewType: ViewHuman,
+		Force: false,
+		Vars:  &Vars{},
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
+		},
+		State: &State{
+			Lock: true,
 		},
 	}
 	if mutate != nil {

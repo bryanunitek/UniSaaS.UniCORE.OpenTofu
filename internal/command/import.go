@@ -13,7 +13,7 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/mitchellh/cli"
+	"github.com/opentofu/opentofu/internal/configs/configload"
 	"github.com/opentofu/opentofu/internal/tracing"
 
 	"github.com/opentofu/opentofu/internal/addrs"
@@ -25,6 +25,27 @@ import (
 	"github.com/opentofu/opentofu/internal/tofu"
 )
 
+func ImportCommander() Command {
+	cmd := Command{
+		Name:  "import",
+		Short: "Associate existing infrastructure with a OpenTofu resource",
+		Long: `Import existing infrastructure into your OpenTofu state.
+
+This will find and import the specified resource into your OpenTofu state, allowing existing infrastructure to come under OpenTofu management without having to be initially created by OpenTofu. The ADDR specified is the address to import the resource to. Please see the documentation online for resource addresses. The ID is a resource-specific ID to identify that resource being imported. Please reference the documentation for the resource type you're importing to determine the ID syntax to use. It typically matches directly to the ID that the provider uses.
+
+This command will not modify your infrastructure, but it will make network requests to inspect parts of your infrastructure relevant to the resource being imported.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindImport(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return ImportCommand{meta}.Execute(args, views.NewImport(args.View, meta.View))
+	}
+
+	return cmd
+}
+
 // ImportCommand is a cli.Command implementation that imports resources
 // into the OpenTofu state.
 type ImportCommand struct {
@@ -32,40 +53,28 @@ type ImportCommand struct {
 }
 
 func (c *ImportCommand) Run(rawArgs []string) int {
+	return RunCommand(ImportCommander(), c.Meta, rawArgs)
+}
+func (c ImportCommand) Execute(args *arguments.Import, view views.Import) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
 	ctx, span := tracing.Tracer().Start(ctx, "Import")
 	defer span.End()
 
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseImport(rawArgs, c.WorkingDir)
-	defer closer()
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewImport(args.ViewOptions, c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		if args.ViewOptions.ViewType == arguments.ViewJSON {
-			return 1 // in case it's json, do not print the help of the command
-		}
-		return cli.RunResultHelp
+	if args.ConfigPath == "" {
+		// pwd is our default -config flag value
+		args.ConfigPath = c.WorkingDir.NormalizePath(c.WorkingDir.RootModuleDir())
 	}
-	c.configureBackendFlags(args)
 
 	// Parse the provided resource address.
 	traversalSrc := []byte(args.ResourceAddress)
 	traversal, travDiags := hclsyntax.ParseTraversalAbs(traversalSrc, "<import-address>", hcl.Pos{Line: 1, Column: 1})
 	diags = diags.Append(travDiags)
 	if travDiags.HasErrors() {
-		// NOTE: The call to registerSynthConfigSource works well with the view.Diagnostics too since the view is
-		// configured in [Meta.initConfigLoader] with a callback to get the sources when it prints the diagnostics.
-		c.registerSynthConfigSource("<import-address>", traversalSrc) // so we can include a source snippet
+		// NOTE: The call to Loader.ForceFileSource works well with the view.Diagnostics too since the view is
+		// configured in [Meta.configLoader] with a callback to get the sources when it prints the diagnostics.
+		c.configLoader().ForceFileSource("<import-address>", traversalSrc) // so we can include a source snippet
 		view.Diagnostics(diags)
 		view.InvalidAddressReference()
 		return 1
@@ -73,9 +82,9 @@ func (c *ImportCommand) Run(rawArgs []string) int {
 	addr, addrDiags := addrs.ParseAbsResourceInstance(traversal)
 	diags = diags.Append(addrDiags)
 	if addrDiags.HasErrors() {
-		// NOTE: The call to registerSynthConfigSource works well with the view.Diagnostics too since the view is
-		// configured in [Meta.initConfigLoader] with a callback to get the sources when it prints the diagnostics.
-		c.registerSynthConfigSource("<import-address>", traversalSrc) // so we can include a source snippet
+		// NOTE: The call to Loader.ForceFileSource works well with the view.Diagnostics too since the view is
+		// configured in [Meta.configLoader] with a callback to get the sources when it prints the diagnostics.
+		c.configLoader().ForceFileSource("<import-address>", traversalSrc) // so we can include a source snippet
 		view.Diagnostics(diags)
 		view.InvalidAddressReference()
 		return 1
@@ -100,7 +109,7 @@ func (c *ImportCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	if !c.dirIsConfigPath(args.ConfigPath) {
+	if !c.configLoader().IsConfigDir(args.ConfigPath) {
 		diags = diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "No OpenTofu configuration files",
@@ -205,7 +214,7 @@ func (c *ImportCommand) Run(rawArgs []string) int {
 	// Build the operation
 	opReq := c.Operation(ctx, b, view.Backend(), enc)
 	opReq.ConfigDir = args.ConfigPath
-	opReq.ConfigLoader, err = c.initConfigLoader()
+	opReq.ConfigLoader, err = configload.Initialise(c.configLoader())
 	if err != nil {
 		diags = diags.Append(tfdiags.Sourceless(
 			tfdiags.Error,
@@ -238,7 +247,9 @@ func (c *ImportCommand) Run(rawArgs []string) int {
 	}
 
 	// Get the context
-	lr, state, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, state, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	diags = diags.Append(ctxDiags)
 	if ctxDiags.HasErrors() {
 		view.Diagnostics(diags)
@@ -311,32 +322,6 @@ func (c *ImportCommand) Run(rawArgs []string) int {
 	}
 
 	return 0
-}
-
-// configureBackendFlags is a temporary shim until we move the flags for state management to a better place
-//
-// TODO meta-refactor: remove this when the Meta fields configured here will be removed and replaced
-// with proper arguments for the backend.
-func (c *ImportCommand) configureBackendFlags(args *arguments.Import) {
-	c.Meta.ignoreRemoteVersion = args.Backend.IgnoreRemoteVersion
-	// TODO meta-refactor: unify these 2 args attributes with the state flags in arguments.extendedFlagSet
-	//  https://github.com/opentofu/opentofu/blob/db8c872defd8666618649ef7e29fa2b809adfd5e/internal/command/arguments/extended.go#L320-L321
-	c.Meta.stateLock = args.State.Lock
-	c.Meta.stateLockTimeout = args.State.LockTimeout
-
-	// TODO meta-refactor: remove this only when there is clear path of passing these from the "arguments" package to
-	// the place where these needs to be used
-	c.Meta.parallelism = args.Parallelism
-	c.Meta.statePath = args.State.StatePath
-	c.Meta.stateOutPath = args.State.StateOutPath
-	c.Meta.backupPath = args.State.BackupPath
-
-	// FIXME: the -input flag value is needed to initialize the backend and the
-	// operation, but there is no clear path to pass this value down, so we
-	// continue to mutate the Meta object state for now.
-	c.Meta.input = args.ViewOptions.InputEnabled
-
-	c.Meta.variableArgs = args.Vars.All()
 }
 
 func (c *ImportCommand) Help() string {

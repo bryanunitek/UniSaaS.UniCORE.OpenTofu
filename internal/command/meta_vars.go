@@ -103,11 +103,11 @@ func (m *Meta) collectVariableValues() (map[string]backend.UnparsedVariableValue
 			}
 			name := raw[:eq]
 			rawVal := raw[eq+1:]
-			if strings.HasSuffix(name, " ") {
+			if before, ok := strings.CutSuffix(name, " "); ok {
 				diags = diags.Append(tfdiags.Sourceless(
 					tfdiags.Error,
 					"Invalid -var option",
-					fmt.Sprintf("Variable name %q is invalid due to trailing space. Did you mean -var=\"%s=%s\"?", name, strings.TrimSuffix(name, " "), strings.TrimPrefix(rawVal, " ")),
+					fmt.Sprintf("Variable name %q is invalid due to trailing space. Did you mean -var=\"%s=%s\"?", name, before, strings.TrimPrefix(rawVal, " ")),
 				))
 				continue
 			}
@@ -184,14 +184,8 @@ func (m *Meta) addVarsFromFile(filename string, sourceType tofu.ValueSourceType,
 		return diags
 	}
 
-	loader, err := m.initConfigLoader()
-	if err != nil {
-		diags = diags.Append(err)
-		return diags
-	}
-
 	// Record the file source code for snippets in diagnostic messages.
-	loader.Parser().ForceFileSource(filename, src)
+	m.configLoader().ForceFileSource(filename, src)
 
 	var f *hcl.File
 

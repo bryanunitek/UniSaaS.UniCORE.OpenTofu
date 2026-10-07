@@ -77,7 +77,7 @@ func TestParseLogin_arguments(t *testing.T) {
 		}{
 			"no hostname": {
 				args:            []string{},
-				wantDiagSummary: "Unexpected argument",
+				wantDiagSummary: "Invalid arguments list",
 				wantDiagDetail:  "The login command expects exactly one argument: the host to log in to.",
 			},
 			"too many hostnames": {
@@ -148,12 +148,27 @@ func TestParseLogin_viewOptions(t *testing.T) {
 			if len(diags) > 0 {
 				t.Fatalf("unexpected diags: %v", diags)
 			}
-			if got.ViewOptions.ViewType != tc.wantViewType {
-				t.Errorf("ViewOptions.ViewType = %v, want %v", got.ViewOptions.ViewType, tc.wantViewType)
+			if got.View.ViewType != tc.wantViewType {
+				t.Errorf("View.ViewType = %v, want %v", got.View.ViewType, tc.wantViewType)
 			}
-			if got.ViewOptions.InputEnabled != tc.wantInputEnabled {
-				t.Errorf("ViewOptions.InputEnabled = %v, want %v", got.ViewOptions.InputEnabled, tc.wantInputEnabled)
+			if got.View.InputEnabled != tc.wantInputEnabled {
+				t.Errorf("View.InputEnabled = %v, want %v", got.View.InputEnabled, tc.wantInputEnabled)
 			}
 		})
+	}
+}
+
+func TestParseLogin_StateLock(t *testing.T) {
+	// NOTE: the command needs to have the state lock flag set as true all the time.
+	args, closer, diags := ParseLogin([]string{"host"})
+	defer closer()
+	if len(diags) > 0 {
+		t.Errorf("unexpected diagnostics: %s", diags)
+	}
+	if args.State == nil {
+		t.Fatalf("expected to have a state arguments object but got nil")
+	}
+	if !args.State.Lock {
+		t.Errorf("the state.lock should be true. This is a bug in the parsing of the arguments")
 	}
 }

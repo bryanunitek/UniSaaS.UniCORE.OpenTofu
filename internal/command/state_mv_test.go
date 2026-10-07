@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/opentofu/opentofu/internal/command/system"
 	"github.com/opentofu/opentofu/internal/command/workdir"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 
@@ -47,7 +48,7 @@ func TestStateMv(t *testing.T) {
 			&states.ResourceInstanceObjectSrc{
 				AttrsJSON:    []byte(`{"id":"foo","foo":"value","bar":"value"}`),
 				Status:       states.ObjectReady,
-				Dependencies: []addrs.ConfigResource{mustResourceAddr("test_instance.foo")},
+				Dependencies: []addrs.ConfigResource{addrs.MustParseResourceAddr("test_instance.foo")},
 			},
 			addrs.AbsProviderConfig{
 				Provider: addrs.NewDefaultProvider("test"),
@@ -60,14 +61,11 @@ func TestStateMv(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -75,7 +73,7 @@ func TestStateMv(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("return code: %d\n\n%s", code, output.Stderr())
@@ -92,14 +90,14 @@ func TestStateMv(t *testing.T) {
 	testStateOutput(t, backups[0], testStateMvOutputOriginal)
 
 	view, done = testView(t)
-	c.View = view
+	meta.View = view
 	// Change the single instance to a counted instance
 	args = []string{
 		"-state", statePath,
 		"test_instance.bar",
 		"test_instance.bar[0]",
 	}
-	code = c.Run(args)
+	code = RunCommander(t, StateMvCommander(), meta, args)
 	output = done(t)
 	if code != 0 {
 		t.Fatalf("return code: %d\n\n%s", code, output.All())
@@ -118,14 +116,14 @@ func TestStateMv(t *testing.T) {
 	}
 
 	view, done = testView(t)
-	c.View = view
+	meta.View = view
 	// change from list to map
 	args = []string{
 		"-state", statePath,
 		"test_instance.bar[0]",
 		"test_instance.bar[\"baz\"]",
 	}
-	code = c.Run(args)
+	code = RunCommander(t, StateMvCommander(), meta, args)
 	output = done(t)
 	if code != 0 {
 		t.Fatalf("return code: %d\n\n%s", code, output.Stderr())
@@ -144,14 +142,14 @@ func TestStateMv(t *testing.T) {
 	}
 
 	view, done = testView(t)
-	c.View = view
+	meta.View = view
 	// change from from map back to single
 	args = []string{
 		"-state", statePath,
 		"test_instance.bar[\"baz\"]",
 		"test_instance.bar",
 	}
-	code = c.Run(args)
+	code = RunCommander(t, StateMvCommander(), meta, args)
 	output = done(t)
 	if code != 0 {
 		t.Fatalf("return code: %d\n\n%s", code, output.Stderr())
@@ -205,14 +203,11 @@ func TestStateMv_backupAndBackupOutOptionsWithNonLocalBackend(t *testing.T) {
 
 		p := testProvider()
 		view, done := testView(t)
-		c := &StateMvCommand{
-			StateMeta{
-				Meta: Meta{
-					WorkingDir:       workdir.NewDir("."),
-					testingOverrides: metaOverridesForProvider(p),
-					View:             view,
-				},
-			},
+
+		meta := Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
 		}
 
 		args := []string{
@@ -221,7 +216,7 @@ func TestStateMv_backupAndBackupOutOptionsWithNonLocalBackend(t *testing.T) {
 			"test_instance.foo",
 			"test_instance.bar",
 		}
-		code := c.Run(args)
+		code := RunCommander(t, StateMvCommander(), meta, args)
 		output := done(t)
 		if code == 0 {
 			t.Fatalf("expected error output, got:\n%s", output.Stdout())
@@ -255,14 +250,11 @@ on a local state file only. You must specify a local state file with the
 
 		p := testProvider()
 		view, done := testView(t)
-		c := &StateMvCommand{
-			StateMeta{
-				Meta: Meta{
-					WorkingDir:       workdir.NewDir("."),
-					testingOverrides: metaOverridesForProvider(p),
-					View:             view,
-				},
-			},
+
+		meta := Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
 		}
 
 		args := []string{
@@ -271,7 +263,7 @@ on a local state file only. You must specify a local state file with the
 			"test_instance.foo",
 			"test_instance.bar",
 		}
-		code := c.Run(args)
+		code := RunCommander(t, StateMvCommander(), meta, args)
 		output := done(t)
 		if code == 0 {
 			t.Fatalf("expected error output, got:\n%s", output.Stdout())
@@ -306,14 +298,11 @@ on a local state file only. You must specify a local state file with the
 
 		p := testProvider()
 		view, done := testView(t)
-		c := &StateMvCommand{
-			StateMeta{
-				Meta: Meta{
-					WorkingDir:       workdir.NewDir("."),
-					testingOverrides: metaOverridesForProvider(p),
-					View:             view,
-				},
-			},
+
+		meta := Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
 		}
 
 		args := []string{
@@ -323,7 +312,7 @@ on a local state file only. You must specify a local state file with the
 			"test_instance.foo",
 			"test_instance.bar",
 		}
-		code := c.Run(args)
+		code := RunCommander(t, StateMvCommander(), meta, args)
 		output := done(t)
 		if code == 0 {
 			t.Fatalf("expected error output, got:\n%s", output.Stdout())
@@ -358,14 +347,11 @@ on a local state file only. You must specify a local state file with the
 
 		p := testProvider()
 		view, done := testView(t)
-		c := &StateMvCommand{
-			StateMeta{
-				Meta: Meta{
-					WorkingDir:       workdir.NewDir("."),
-					testingOverrides: metaOverridesForProvider(p),
-					View:             view,
-				},
-			},
+
+		meta := Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
 		}
 
 		args := []string{
@@ -374,7 +360,7 @@ on a local state file only. You must specify a local state file with the
 			"test_instance.foo",
 			"test_instance.bar",
 		}
-		code := c.Run(args)
+		code := RunCommander(t, StateMvCommander(), meta, args)
 		output := done(t)
 		if code != 0 {
 			t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -399,14 +385,11 @@ on a local state file only. You must specify a local state file with the
 
 		p := testProvider()
 		view, done := testView(t)
-		c := &StateMvCommand{
-			StateMeta{
-				Meta: Meta{
-					WorkingDir:       workdir.NewDir("."),
-					testingOverrides: metaOverridesForProvider(p),
-					View:             view,
-				},
-			},
+
+		meta := Meta{
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			View:             view,
 		}
 
 		args := []string{
@@ -415,7 +398,7 @@ on a local state file only. You must specify a local state file with the
 			"test_instance.foo",
 			"test_instance.bar",
 		}
-		code := c.Run(args)
+		code := RunCommander(t, StateMvCommander(), meta, args)
 		output := done(t)
 		if code != 0 {
 			t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -454,7 +437,7 @@ func TestStateMv_resourceToInstance(t *testing.T) {
 			&states.ResourceInstanceObjectSrc{
 				AttrsJSON:    []byte(`{"id":"foo","foo":"value","bar":"value"}`),
 				Status:       states.ObjectReady,
-				Dependencies: []addrs.ConfigResource{mustResourceAddr("test_instance.foo")},
+				Dependencies: []addrs.ConfigResource{addrs.MustParseResourceAddr("test_instance.foo")},
 			},
 			addrs.AbsProviderConfig{
 				Provider: addrs.NewDefaultProvider("test"),
@@ -478,14 +461,11 @@ func TestStateMv_resourceToInstance(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -493,7 +473,7 @@ func TestStateMv_resourceToInstance(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar[0]",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -556,14 +536,11 @@ func TestStateMv_resourceToInstanceErr(t *testing.T) {
 	p := testProvider()
 
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -573,7 +550,7 @@ func TestStateMv_resourceToInstanceErr(t *testing.T) {
 		"test_instance.bar[0]",
 	}
 
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code == 0 {
 		t.Fatalf("expected error output, got:\n%s", output.All())
@@ -627,15 +604,12 @@ func TestStateMv_resourceToInstanceErrInAutomation(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:          workdir.NewDir("."),
-				testingOverrides:    metaOverridesForProvider(p),
-				View:                view,
-				RunningInAutomation: true,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
+		SystemCfg:        system.Config{RunningInAutomation: true},
 	}
 
 	args := []string{
@@ -645,7 +619,7 @@ func TestStateMv_resourceToInstanceErrInAutomation(t *testing.T) {
 		"test_instance.bar[0]",
 	}
 
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code == 0 {
 		t.Fatalf("expected error output, got:\n%s", output.Stdout())
@@ -705,14 +679,11 @@ func TestStateMv_instanceToResource(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -720,7 +691,7 @@ func TestStateMv_instanceToResource(t *testing.T) {
 		"test_instance.foo[0]",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -782,14 +753,11 @@ func TestStateMv_instanceToNewResource(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -797,7 +765,7 @@ func TestStateMv_instanceToNewResource(t *testing.T) {
 		"test_instance.foo[0]",
 		"test_instance.bar[\"new\"]",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -813,14 +781,14 @@ test_instance.bar["new"]:
 `)
 
 	view, done = testView(t)
-	c.View = view
+	meta.View = view
 	// now move the instance to a new resource in a new module
 	args = []string{
 		"-state", statePath,
 		"test_instance.bar[\"new\"]",
 		"module.test.test_instance.baz[\"new\"]",
 	}
-	code = c.Run(args)
+	code = RunCommander(t, StateMvCommander(), meta, args)
 	output = done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -861,14 +829,11 @@ func TestStateMv_differentResourceTypes(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -877,7 +842,7 @@ func TestStateMv_differentResourceTypes(t *testing.T) {
 		"test_instance.foo",
 		"test_network.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code == 0 {
 		t.Fatalf("expected error output, got:\n%s", output.Stdout())
@@ -942,16 +907,14 @@ func TestStateMv_explicitWithBackend(t *testing.T) {
 
 	// init our backend
 	initView, initDone := testView(t)
-	ic := &InitCommand{
-		Meta: Meta{
-			WorkingDir:       workdir.NewDir("."),
-			testingOverrides: metaOverridesForProvider(testProvider()),
-			View:             initView,
-		},
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(testProvider()),
+		View:             initView,
 	}
 
 	args := []string{}
-	code := ic.Run(args)
+	code := RunCommander(t, InitCommander(), meta, args)
 	initOutput := initDone(t)
 	if code != 0 {
 		t.Fatalf("bad: \n%s", initOutput.All())
@@ -960,14 +923,11 @@ func TestStateMv_explicitWithBackend(t *testing.T) {
 	// only modify statePath
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta = Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args = []string{
@@ -976,7 +936,7 @@ func TestStateMv_explicitWithBackend(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code = c.Run(args)
+	code = RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.All())
@@ -1013,7 +973,7 @@ func TestStateMv_backupExplicit(t *testing.T) {
 			&states.ResourceInstanceObjectSrc{
 				AttrsJSON:    []byte(`{"id":"foo","foo":"value","bar":"value"}`),
 				Status:       states.ObjectReady,
-				Dependencies: []addrs.ConfigResource{mustResourceAddr("test_instance.foo")},
+				Dependencies: []addrs.ConfigResource{addrs.MustParseResourceAddr("test_instance.foo")},
 			},
 			addrs.AbsProviderConfig{
 				Provider: addrs.NewDefaultProvider("test"),
@@ -1027,14 +987,11 @@ func TestStateMv_backupExplicit(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1043,7 +1000,7 @@ func TestStateMv_backupExplicit(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1080,14 +1037,11 @@ func TestStateMv_stateOutNew(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1096,7 +1050,7 @@ func TestStateMv_stateOutNew(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1157,14 +1111,11 @@ func TestStateMv_stateOutExisting(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1173,7 +1124,7 @@ func TestStateMv_stateOutExisting(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1202,18 +1153,15 @@ func TestStateMv_noState(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{"from", "to"}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 1 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1276,14 +1224,11 @@ func TestStateMv_stateOutNew_count(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1292,7 +1237,7 @@ func TestStateMv_stateOutNew_count(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1315,7 +1260,7 @@ func TestStateMv_stateOutNew_count(t *testing.T) {
 func TestStateMv_stateOutNew_largeCount(t *testing.T) {
 	state := states.BuildState(func(s *states.SyncState) {
 		// test_instance.foo has 11 instances, all the same except for their ids
-		for i := 0; i < 11; i++ {
+		for i := range 11 {
 			s.SetResourceInstanceCurrent(
 				addrs.Resource{
 					Mode: addrs.ManagedResourceMode,
@@ -1355,14 +1300,11 @@ func TestStateMv_stateOutNew_largeCount(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1371,7 +1313,7 @@ func TestStateMv_stateOutNew_largeCount(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1430,14 +1372,11 @@ func TestStateMv_stateOutNew_nestedModule(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1446,7 +1385,7 @@ func TestStateMv_stateOutNew_nestedModule(t *testing.T) {
 		"module.foo",
 		"module.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1490,14 +1429,11 @@ func TestStateMv_toNewModule(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1506,7 +1442,7 @@ func TestStateMv_toNewModule(t *testing.T) {
 		"test_instance.bar",
 		"module.bar.test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1524,7 +1460,7 @@ func TestStateMv_toNewModule(t *testing.T) {
 	testStateOutput(t, backups[0], testStateMvNewModule_stateOutOriginal)
 
 	view, done = testView(t)
-	c.View = view
+	meta.View = view
 	// now verify we can move the module itself
 	args = []string{
 		"-state", stateOutPath1,
@@ -1532,7 +1468,7 @@ func TestStateMv_toNewModule(t *testing.T) {
 		"module.bar",
 		"module.foo",
 	}
-	code = c.Run(args)
+	code = RunCommander(t, StateMvCommander(), meta, args)
 	output = done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1571,7 +1507,7 @@ func TestStateMv_withinBackend(t *testing.T) {
 			&states.ResourceInstanceObjectSrc{
 				AttrsJSON:    []byte(`{"id":"foo","foo":"value","bar":"value"}`),
 				Status:       states.ObjectReady,
-				Dependencies: []addrs.ConfigResource{mustResourceAddr("test_instance.foo")},
+				Dependencies: []addrs.ConfigResource{addrs.MustParseResourceAddr("test_instance.foo")},
 			},
 			addrs.AbsProviderConfig{
 				Provider: addrs.NewDefaultProvider("test"),
@@ -1597,14 +1533,11 @@ func TestStateMv_withinBackend(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1612,7 +1545,7 @@ func TestStateMv_withinBackend(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1629,7 +1562,7 @@ func TestStateMv_fromBackendToLocal(t *testing.T) {
 
 	state := states.NewState()
 	state.Module(addrs.RootModuleInstance).SetResourceInstanceCurrent(
-		mustResourceAddr("test_instance.foo").Resource.Instance(addrs.NoKey),
+		addrs.MustParseResourceAddr("test_instance.foo").Resource.Instance(addrs.NoKey),
 		&states.ResourceInstanceObjectSrc{
 			AttrsJSON: []byte(`{"id":"bar","foo":"value","bar":"value"}`),
 			Status:    states.ObjectReady,
@@ -1641,7 +1574,7 @@ func TestStateMv_fromBackendToLocal(t *testing.T) {
 		addrs.NoKey,
 	)
 	state.Module(addrs.RootModuleInstance).SetResourceInstanceCurrent(
-		mustResourceAddr("test_instance.baz").Resource.Instance(addrs.NoKey),
+		addrs.MustParseResourceAddr("test_instance.baz").Resource.Instance(addrs.NoKey),
 		&states.ResourceInstanceObjectSrc{
 			AttrsJSON: []byte(`{"id":"foo","foo":"value","bar":"value"}`),
 			Status:    states.ObjectReady,
@@ -1671,14 +1604,11 @@ func TestStateMv_fromBackendToLocal(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1686,7 +1616,7 @@ func TestStateMv_fromBackendToLocal(t *testing.T) {
 		"test_instance.foo",
 		"test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1726,14 +1656,11 @@ func TestStateMv_onlyResourceInModule(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1741,7 +1668,7 @@ func TestStateMv_onlyResourceInModule(t *testing.T) {
 		"module.foo.test_instance.foo",
 		"module.foo.test_instance.bar",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 0 {
 		t.Fatalf("bad: %d\n\n%s", code, output.Stderr())
@@ -1758,27 +1685,17 @@ func TestStateMv_onlyResourceInModule(t *testing.T) {
 	testStateOutput(t, backups[0], testStateMvOnlyResourceInModule_original)
 }
 
-func TestStateMvHelp(t *testing.T) {
-	c := &StateMvCommand{}
-	if strings.ContainsRune(c.Help(), '\t') {
-		t.Fatal("help text contains tab character, which will result in poor formatting")
-	}
-}
-
 func TestStateMvInvalidSourceAddress(t *testing.T) {
 	state := states.BuildState(func(s *states.SyncState) {})
 	statePath := testStateFile(t, state)
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1786,7 +1703,7 @@ func TestStateMvInvalidSourceAddress(t *testing.T) {
 		"foo.bar1",
 		"foo.bar2",
 	}
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 1 {
 		t.Fatalf("expected error code 1, got:\n%d\n%s", code, output.All())
@@ -1825,7 +1742,7 @@ func TestStateMv_checkRequiredVersion(t *testing.T) {
 			&states.ResourceInstanceObjectSrc{
 				AttrsJSON:    []byte(`{"id":"foo","foo":"value","bar":"value"}`),
 				Status:       states.ObjectReady,
-				Dependencies: []addrs.ConfigResource{mustResourceAddr("test_instance.foo")},
+				Dependencies: []addrs.ConfigResource{addrs.MustParseResourceAddr("test_instance.foo")},
 			},
 			addrs.AbsProviderConfig{
 				Provider: addrs.NewDefaultProvider("test"),
@@ -1838,14 +1755,11 @@ func TestStateMv_checkRequiredVersion(t *testing.T) {
 
 	p := testProvider()
 	view, done := testView(t)
-	c := &StateMvCommand{
-		StateMeta{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             view,
-			},
-		},
+
+	meta := Meta{
+		WorkingDir:       workdir.NewDir("."),
+		testingOverrides: metaOverridesForProvider(p),
+		View:             view,
 	}
 
 	args := []string{
@@ -1854,7 +1768,7 @@ func TestStateMv_checkRequiredVersion(t *testing.T) {
 		"test_instance.bar",
 	}
 
-	code := c.Run(args)
+	code := RunCommander(t, StateMvCommander(), meta, args)
 	output := done(t)
 	if code != 1 {
 		t.Fatalf("got exit status %d; want 1\nstderr:\n%s\n\nstdout:\n%s", code, output.Stderr(), output.Stdout())

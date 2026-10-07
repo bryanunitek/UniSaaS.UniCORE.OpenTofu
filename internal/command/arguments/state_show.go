@@ -13,58 +13,34 @@ import (
 type StateShow struct {
 	// TargetRawAddr represents the raw resource address of the resource requested to have the state shown for.
 	TargetRawAddr string
-	// ShowSensitive forces the show command to print also the sensitive values of the targeted resource.
-	// This applies only to the [views.StateHuman] since the [views.StateJSON] shows the sensitive values
-	// all the time.
-	ShowSensitive bool
-	// StatePath represents the path of the state where the [TargetRawAddr] resource information is stored in.
-	StatePath string
 
-	// ViewOptions specifies which view options to use
-	ViewOptions ViewOptions
+	// View represents the global view options
+	View *View
 
-	// Vars are the common extended flags
-	Vars *Vars
+	// Vars and State are the common extended flags
+	Vars  *Vars
+	State *State
+}
+
+// BindStateShow registers CLI arguments, returning a StateShow value and it's corresponding hooks.
+func BindStateShow(cli *CommandLine) *StateShow {
+	ret := StateShow{
+		View:  BindView(cli, viewFlagNoInput|viewFlagSensitive),
+		Vars:  BindVars(cli),
+		State: BindState(cli, stateFlagStateIn),
+	}
+
+	cli.PositionalArg(&ret.TargetRawAddr, "ADDRESS", false)
+
+	return &ret
 }
 
 // ParseStateShow processes CLI arguments, returning a StateShow value, a closer function, and errors.
 // If errors are encountered, a StateShow value is still returned representing
 // the best effort interpretation of the arguments.
 func ParseStateShow(args []string) (*StateShow, func(), tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-
-	ret := &StateShow{
-		Vars: &Vars{},
-	}
-	cmdFlags := extendedFlagSet("state show", nil, nil, ret.Vars)
-	cmdFlags.BoolVar(&ret.ShowSensitive, "show-sensitive", false, "displays sensitive values")
-	// TODO meta-refactor: we should use directly the [State] struct here but we cannot use it in the `extendedFlagSet`
-	//  since that registers more flags than desired by this command.
-	cmdFlags.StringVar(&ret.StatePath, "state", "", "state-path")
-
-	ret.ViewOptions.AddFlags(cmdFlags, false)
-
-	if err := cmdFlags.Parse(args); err != nil {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Failed to parse command-line flags",
-			err.Error(),
-		))
-	}
-
-	args = cmdFlags.Args()
-	if len(args) != 1 {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Invalid number of arguments",
-			"Exactly one argument expected",
-		))
-	} else {
-		ret.TargetRawAddr = args[0]
-	}
-
-	closer, moreDiags := ret.ViewOptions.Parse()
-	diags = diags.Append(moreDiags)
-
+	cli := new(CommandLine)
+	ret := BindStateShow(cli)
+	closer, diags := cli.parseWithHooks("state show", args)
 	return ret, closer, diags
 }

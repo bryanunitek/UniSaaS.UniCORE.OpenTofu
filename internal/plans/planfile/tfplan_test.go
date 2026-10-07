@@ -156,6 +156,31 @@ func TestTFPlanRoundTrip(t *testing.T) {
 					Addr: addrs.Resource{
 						Mode: addrs.ManagedResourceMode,
 						Type: "test_thing",
+						Name: "forget_then_create",
+					}.Instance(addrs.IntKey(0)).Absolute(addrs.RootModuleInstance),
+					PrevRunAddr: addrs.Resource{
+						Mode: addrs.ManagedResourceMode,
+						Type: "test_thing",
+						Name: "forget_then_create",
+					}.Instance(addrs.IntKey(0)).Absolute(addrs.RootModuleInstance),
+					ProviderAddr: addrs.AbsProviderConfig{
+						Provider: addrs.NewDefaultProvider("test"),
+						Module:   addrs.RootModule,
+					},
+					ChangeSrc: plans.ChangeSrc{
+						Action: plans.ForgetThenCreate,
+						Before: mustNewDynamicValue(cty.ObjectVal(map[string]cty.Value{
+							"id": cty.StringVal("old-id"),
+						}), objTy),
+						After: mustNewDynamicValue(cty.ObjectVal(map[string]cty.Value{
+							"id": cty.StringVal("new-id"),
+						}), objTy),
+					},
+				},
+				{
+					Addr: addrs.Resource{
+						Mode: addrs.ManagedResourceMode,
+						Type: "test_thing",
 						Name: "importing",
 					}.Instance(addrs.IntKey(1)).Absolute(addrs.RootModuleInstance),
 					PrevRunAddr: addrs.Resource{
@@ -299,7 +324,7 @@ func TestTFPlanRoundTrip(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := writeTfplan(plan, &buf)
+	err := writePlan(plan, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +333,7 @@ func TestTFPlanRoundTrip(t *testing.T) {
 	// with null in the plan file "variables" object and when read, will be visible only in the plan.EphemeralVariables
 	delete(plan.VariableValues, "baz")
 
-	newPlan, err := readTfplan(&buf)
+	newPlan, err := readPlan(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,12 +436,12 @@ func TestTFPlanRoundTripDestroy(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := writeTfplan(plan, &buf)
+	err := writePlan(plan, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	newPlan, err := readTfplan(&buf)
+	newPlan, err := readPlan(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,12 +577,12 @@ func TestTFPlanChangeReasonsEncoding(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		err := writeTfplan(plan, &buf)
+		err := writePlan(plan, &buf)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		_, err = readTfplan(&buf)
+		_, err = readPlan(&buf)
 		if err != nil {
 			t.Fatal(err)
 		}

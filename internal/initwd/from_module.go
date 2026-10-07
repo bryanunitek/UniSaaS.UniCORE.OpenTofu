@@ -20,6 +20,7 @@ import (
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/configs/configload"
+	"github.com/opentofu/opentofu/internal/configs/symlib"
 	"github.com/opentofu/opentofu/internal/copy"
 	"github.com/opentofu/opentofu/internal/getmodules"
 
@@ -52,7 +53,7 @@ const initFromModuleRootKeyPrefix = initFromModuleRootCallName + "."
 // references using ../ from that module to be unresolvable. Error diagnostics
 // are produced in that case, to prompt the user to rewrite the source strings
 // to be absolute references to the original remote module.
-func DirFromModule(ctx context.Context, loader *configload.Loader, rootDir, modulesDir, sourceAddrStr string, reg *registry.Client, remoteFetcher *getmodules.PackageFetcher, hooks ModuleInstallHooks) tfdiags.Diagnostics {
+func DirFromModule(ctx context.Context, loader configload.Loader, rootDir, modulesDir, sourceAddrStr string, reg *registry.Client, remoteFetcher *getmodules.PackageFetcher, hooks ModuleInstallHooks) tfdiags.Diagnostics {
 
 	var diags tfdiags.Diagnostics
 
@@ -152,6 +153,7 @@ func DirFromModule(ctx context.Context, loader *configload.Loader, rootDir, modu
 				Name:       initFromModuleRootCallName,
 				SourceAddr: sourceAddr,
 				Source:     hcl.StaticExpr(cty.StringVal(sourceAddrStr), rng),
+				Config:     hcl.EmptyBody(),
 				DeclRange:  rng,
 				Variables: func(v *configs.Variable) (cty.Value, hcl.Diagnostics) {
 					if v.Default != cty.NilVal {
@@ -178,7 +180,8 @@ func DirFromModule(ctx context.Context, loader *configload.Loader, rootDir, modu
 	}
 
 	walker := inst.moduleInstallWalker(ctx, instManifest, true, wrapHooks, remoteFetcher)
-	_, cDiags := inst.installDescendentModules(ctx, fakeRootModule, instManifest, walker, true)
+	fakeRootCall := configs.NewStaticModuleCall(addrs.RootModule, hcl.Range{}, nil, "", "")
+	_, cDiags := inst.installDescendentModules(ctx, fakeRootModule, fakeRootCall, instManifest, walker, true)
 	if cDiags.HasErrors() {
 		return diags.Append(cDiags)
 	}
@@ -223,13 +226,16 @@ func DirFromModule(ctx context.Context, loader *configload.Loader, rootDir, modu
 			// and must thus be rewritten to be absolute addresses again.
 			// For now we can't do this rewriting automatically, but we'll
 			// generate an error to help the user do it manually.
-			mod, _ := loader.Parser().LoadConfigDir(rootDir, configs.NewStaticModuleCall(addrs.RootModule, hcl.Range{}, func(v *configs.Variable) (cty.Value, hcl.Diagnostics) { // ignore diagnostics since we're just doing value-add here anyway
-				if v.Default != cty.NilVal {
-					return v.Default, nil
-				}
-				return cty.DynamicVal, nil
-			}, rootDir, ""))
+			mod, _ := loader.LoadConfigDir(rootDir)
 			if mod != nil {
+				call := configs.NewStaticModuleCall(addrs.RootModule, hcl.Range{}, func(v *configs.Variable) (cty.Value, hcl.Diagnostics) { // ignore diagnostics since we're just doing value-add here anyway
+					if v.Default != cty.NilVal {
+						return v.Default, nil
+					}
+					return cty.DynamicVal, nil
+				}, rootDir, "")
+				_ = mod.Finalize(symlib.EmptyTable, call) // TODO this does not allow for static evaluation combined with symbol libraries
+
 				for _, mc := range mod.ModuleCalls {
 					if pathTraversesUp(mc.SourceAddrRaw) {
 						packageAddr, givenSubdir := getmodules.SplitPackageSubdir(sourceAddrStr)

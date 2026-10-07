@@ -9,13 +9,28 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/backend"
 	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/command/jsonprovider"
 	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/configs/configload"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
+
+func ProvidersSchemaCommander() Command {
+	cmd := Command{
+		Name:  "schema",
+		Short: "Show schemas for the providers used in the configuration",
+		Long:  `Prints out a json representation of the schemas for all providers used in the current configuration.`,
+	}
+
+	args := arguments.BindProvidersSchema(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return ProvidersSchemaCommand{meta}.Execute(args, views.NewProvidersSchema(meta.View))
+	}
+
+	return cmd
+}
 
 // ProvidersSchemaCommand is a Command implementation that prints out information
 // about the providers used in the current configuration/state.
@@ -32,21 +47,11 @@ func (c *ProvidersSchemaCommand) Synopsis() string {
 }
 
 func (c *ProvidersSchemaCommand) Run(rawArgs []string) int {
+	return RunCommand(ProvidersSchemaCommander(), c.Meta, rawArgs)
+}
+func (c ProvidersSchemaCommand) Execute(args *arguments.ProvidersSchema, view views.ProvidersSchema) int {
+	var diags tfdiags.Diagnostics
 	ctx := c.CommandContext()
-
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-
-	args, closer, diags := arguments.ParseProvidersSchema(rawArgs)
-	defer closer()
-
-	view := views.NewProvidersSchema(c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		return cli.RunResultHelp
-	}
-
-	c.Meta.variableArgs = args.Vars.All()
 
 	// Check for user-supplied plugin path
 	var err error
@@ -99,7 +104,7 @@ func (c *ProvidersSchemaCommand) Run(rawArgs []string) int {
 	// Build the operation
 	opReq := c.Operation(ctx, b, view.Backend(), enc)
 	opReq.ConfigDir = cwd
-	opReq.ConfigLoader, err = c.initConfigLoader()
+	opReq.ConfigLoader, err = configload.Initialise(c.configLoader())
 	var callDiags tfdiags.Diagnostics
 	opReq.RootCall, callDiags = c.rootModuleCall(ctx, opReq.ConfigDir)
 	diags = diags.Append(callDiags)
@@ -116,7 +121,9 @@ func (c *ProvidersSchemaCommand) Run(rawArgs []string) int {
 	}
 
 	// Get the context
-	lr, _, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, _, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	diags = diags.Append(ctxDiags)
 	if ctxDiags.HasErrors() {
 		view.Diagnostics(diags)

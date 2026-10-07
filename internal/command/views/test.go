@@ -74,7 +74,7 @@ type Test interface {
 	FatalInterruptSummary(run *moduletest.Run, file *moduletest.File, states map[*moduletest.Run]*states.State, created []*plans.ResourceInstanceChangeSrc)
 }
 
-func NewTest(args arguments.ViewOptions, view *View) Test {
+func NewTest(args *arguments.View, view *View) Test {
 	var test Test
 	switch args.ViewType {
 	case arguments.ViewJSON:
@@ -430,7 +430,7 @@ func (t *TestJSON) Conclusion(suite *moduletest.Suite) {
 		// Then no tests.
 		message.WriteString("Executed 0 tests")
 		if summary.Skipped > 0 {
-			message.WriteString(fmt.Sprintf(", %d skipped.", summary.Skipped))
+			fmt.Fprintf(&message, ", %d skipped.", summary.Skipped)
 		} else {
 			message.WriteString(".")
 		}
@@ -441,9 +441,9 @@ func (t *TestJSON) Conclusion(suite *moduletest.Suite) {
 			message.WriteString("Failure!")
 		}
 
-		message.WriteString(fmt.Sprintf(" %d passed, %d failed", summary.Passed, summary.Failed+summary.Errored))
+		fmt.Fprintf(&message, " %d passed, %d failed", summary.Passed, summary.Failed+summary.Errored)
 		if summary.Skipped > 0 {
-			message.WriteString(fmt.Sprintf(", %d skipped.", summary.Skipped))
+			fmt.Fprintf(&message, ", %d skipped.", summary.Skipped)
 		} else {
 			message.WriteString(".")
 		}
@@ -648,7 +648,7 @@ func SaveErroredTestStateFile(state *states.State, run *moduletest.Run, file *mo
 	var op Operation
 	switch v := view.(type) {
 	case *TestHuman:
-		op = NewOperation(arguments.ViewHuman, false, v.view)
+		op = NewOperation(arguments.ViewHuman, v.view)
 		v.view.streams.Eprint(format.WordWrap("\nWriting state to file: errored_test.tfstate\n", v.view.errorColumns()))
 	case *TestJSON:
 		op = &OperationJSON{

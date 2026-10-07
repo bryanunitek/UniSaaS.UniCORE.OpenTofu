@@ -33,7 +33,7 @@ type Apply interface {
 }
 
 // NewApply returns an initialized Apply implementation for the given ViewType.
-func NewApply(args arguments.ViewOptions, destroy bool, view *View) Apply {
+func NewApply(args *arguments.View, destroy bool, view *View) Apply {
 	var apply Apply
 	switch args.ViewType {
 	case arguments.ViewJSON:
@@ -44,10 +44,9 @@ func NewApply(args arguments.ViewOptions, destroy bool, view *View) Apply {
 		}
 	case arguments.ViewHuman:
 		apply = &ApplyHuman{
-			view:         view,
-			destroy:      destroy,
-			inAutomation: view.RunningInAutomation(),
-			countHook:    &countHook{},
+			view:      view,
+			destroy:   destroy,
+			countHook: &countHook{},
 		}
 	default:
 		panic(fmt.Sprintf("unknown view type %v", args.ViewType))
@@ -120,8 +119,7 @@ func (m ApplyMulti) Backend() Backend {
 type ApplyHuman struct {
 	view *View
 
-	destroy      bool
-	inAutomation bool
+	destroy bool
 
 	countHook *countHook
 }
@@ -178,12 +176,12 @@ func (v *ApplyHuman) ResourceCount(stateOutPath string) {
 func (v *ApplyHuman) Outputs(outputValues map[string]*states.OutputValue) {
 	if len(outputValues) > 0 {
 		v.view.streams.Print(v.view.colorize.Color("[reset][bold][green]\nOutputs:\n\n"))
-		NewOutput(arguments.ViewOptions{ViewType: arguments.ViewHuman}, v.view).Output("", outputValues)
+		NewOutput(&arguments.View{ViewType: arguments.ViewHuman}, v.view).Output("", outputValues)
 	}
 }
 
 func (v *ApplyHuman) Operation() Operation {
-	return NewOperation(arguments.ViewHuman, v.inAutomation, v.view)
+	return NewOperation(arguments.ViewHuman, v.view)
 }
 
 func (v *ApplyHuman) Hooks() []tofu.Hook {

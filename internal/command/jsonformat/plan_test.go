@@ -8,6 +8,7 @@ package jsonformat
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -37,12 +38,7 @@ func TestRenderHuman_EmptyPlan(t *testing.T) {
 	renderer := Renderer{Colorize: color, Streams: streams}
 	plan.renderHuman(renderer, plans.NormalMode)
 
-	want := `
-No changes. Your infrastructure matches the configuration.
-
-OpenTofu has compared your real infrastructure against your configuration and
-found no differences, so no changes are needed.
-`
+	want := "\nNo changes. Your infrastructure matches the configuration.\n"
 
 	got := done(t).Stdout()
 	if diff := cmp.Diff(want, got); len(diff) > 0 {
@@ -68,16 +64,44 @@ func TestRenderHuman_EmptyOutputs(t *testing.T) {
 	renderer := Renderer{Colorize: color, Streams: streams}
 	plan.renderHuman(renderer, plans.NormalMode)
 
-	want := `
-No changes. Your infrastructure matches the configuration.
-
-OpenTofu has compared your real infrastructure against your configuration and
-found no differences, so no changes are needed.
-`
+	want := "\nNo changes. Your infrastructure matches the configuration.\n"
 
 	got := done(t).Stdout()
 	if diff := cmp.Diff(want, got); len(diff) > 0 {
 		t.Errorf("unexpected output\ngot:\n%s\nwant:\n%s\ndiff:\n%s", got, want, diff)
+	}
+}
+
+func TestRenderHuman_NoChanges_Targeted(t *testing.T) {
+	color := &colorstring.Colorize{Colors: colorstring.DefaultColors, Disable: true}
+	streams, done := terminal.StreamsForTesting(t)
+
+	plan := Plan{}
+
+	renderer := Renderer{Colorize: color, Streams: streams}
+	plan.renderHuman(renderer, plans.NormalMode, plans.NoChanges, plans.Targeted)
+
+	got := done(t).Stdout()
+	if !strings.Contains(got, "You used the -target option") {
+		t.Errorf("expected output to contain a -target hint when Targeted quality is set, got:\n%s", got)
+	}
+	if want := "configuration.\n\nNote: You used the -target option"; !strings.Contains(got, want) {
+		t.Errorf("wrong spacing before the -target hint\ngot:\n%q\n\nwant substring: %q", got, want)
+	}
+}
+
+func TestRenderHuman_NoChanges_NotTargeted(t *testing.T) {
+	color := &colorstring.Colorize{Colors: colorstring.DefaultColors, Disable: true}
+	streams, done := terminal.StreamsForTesting(t)
+
+	plan := Plan{}
+
+	renderer := Renderer{Colorize: color, Streams: streams}
+	plan.renderHuman(renderer, plans.NormalMode, plans.NoChanges)
+
+	got := done(t).Stdout()
+	if strings.Contains(got, "You used the -target option") {
+		t.Errorf("expected output to NOT contain a -target hint when Targeted quality is not set, got:\n%s", got)
 	}
 }
 
@@ -3659,6 +3683,53 @@ func TestResourceChange_nestedList(t *testing.T) {
         # (1 unchanged block hidden)
     }`,
 		},
+		"in-place update - whole block unknown": {
+			Action: plans.Update,
+			Mode:   addrs.ManagedResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-BEFORE"),
+				"disks": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"mount_point": cty.StringVal("/var/diska"),
+						"size":        cty.StringVal("50GB"),
+					}),
+				}),
+				"root_block_device": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"volume_type": cty.StringVal("gp2"),
+						"new_field":   cty.StringVal("new_value"),
+					}),
+				}),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-AFTER"),
+				"disks": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"mount_point": cty.StringVal("/var/diska"),
+						"size":        cty.StringVal("50GB"),
+					}),
+				}),
+				"root_block_device": cty.UnknownVal(cty.List(cty.Object(map[string]cty.Type{
+					"volume_type": cty.String,
+					"new_field":   cty.String,
+				}))),
+			}),
+			RequiredReplace: cty.NewPathSet(),
+			Schema:          testSchemaPlus(configschema.NestingList),
+			ExpectedOutput: `  # test_instance.example will be updated in-place
+  ~ resource "test_instance" "example" {
+      ~ ami   = "ami-BEFORE" -> "ami-AFTER"
+        id    = "i-02ae66f368e8518a9"
+        # (1 unchanged attribute hidden)
+
+      ~ root_block_device {
+          + new_field   = (known after apply)
+          + volume_type = (known after apply)
+        } -> (known after apply)
+    }`,
+		},
 	}
 	runTestCases(t, testCases)
 }
@@ -4172,6 +4243,53 @@ func TestResourceChange_nestedSet(t *testing.T) {
         id    = "i-02ae66f368e8518a9"
 
         # (1 unchanged block hidden)
+    }`,
+		},
+		"in-place update - whole block unknown": {
+			Action: plans.Update,
+			Mode:   addrs.ManagedResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-BEFORE"),
+				"disks": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"mount_point": cty.StringVal("/var/diska"),
+						"size":        cty.StringVal("50GB"),
+					}),
+				}),
+				"root_block_device": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"volume_type": cty.StringVal("gp2"),
+						"new_field":   cty.StringVal("new_value"),
+					}),
+				}),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-AFTER"),
+				"disks": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"mount_point": cty.StringVal("/var/diska"),
+						"size":        cty.StringVal("50GB"),
+					}),
+				}),
+				"root_block_device": cty.UnknownVal(cty.Set(cty.Object(map[string]cty.Type{
+					"volume_type": cty.String,
+					"new_field":   cty.String,
+				}))),
+			}),
+			RequiredReplace: cty.NewPathSet(),
+			Schema:          testSchemaPlus(configschema.NestingSet),
+			ExpectedOutput: `  # test_instance.example will be updated in-place
+  ~ resource "test_instance" "example" {
+      ~ ami   = "ami-BEFORE" -> "ami-AFTER"
+        id    = "i-02ae66f368e8518a9"
+        # (1 unchanged attribute hidden)
+
+      ~ root_block_device {
+          + new_field   = (known after apply)
+          + volume_type = (known after apply)
+        } -> (known after apply)
     }`,
 		},
 	}
@@ -5197,6 +5315,53 @@ func TestResourceChange_nestedMap(t *testing.T) {
         # (2 unchanged blocks hidden)
     }`,
 		},
+		"in-place update - whole block unknown": {
+			Action: plans.Update,
+			Mode:   addrs.ManagedResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-BEFORE"),
+				"disks": cty.MapVal(map[string]cty.Value{
+					"disk_one": cty.ObjectVal(map[string]cty.Value{
+						"mount_point": cty.StringVal("/var/diska"),
+						"size":        cty.StringVal("50GB"),
+					}),
+				}),
+				"root_block_device": cty.MapVal(map[string]cty.Value{
+					"a": cty.ObjectVal(map[string]cty.Value{
+						"volume_type": cty.StringVal("gp2"),
+						"new_field":   cty.StringVal("new_value"),
+					}),
+				}),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-AFTER"),
+				"disks": cty.MapVal(map[string]cty.Value{
+					"disk_one": cty.ObjectVal(map[string]cty.Value{
+						"mount_point": cty.StringVal("/var/diska"),
+						"size":        cty.StringVal("50GB"),
+					}),
+				}),
+				"root_block_device": cty.UnknownVal(cty.Map(cty.Object(map[string]cty.Type{
+					"volume_type": cty.String,
+					"new_field":   cty.String,
+				}))),
+			}),
+			RequiredReplace: cty.NewPathSet(),
+			Schema:          testSchemaPlus(configschema.NestingMap),
+			ExpectedOutput: `  # test_instance.example will be updated in-place
+  ~ resource "test_instance" "example" {
+      ~ ami   = "ami-BEFORE" -> "ami-AFTER"
+        id    = "i-02ae66f368e8518a9"
+        # (1 unchanged attribute hidden)
+
+      ~ root_block_device {
+          + new_field   = (known after apply)
+          + volume_type = (known after apply)
+        } -> (known after apply)
+    }`,
+		},
 	}
 	runTestCases(t, testCases)
 }
@@ -5528,6 +5693,47 @@ func TestResourceChange_nestedSingle(t *testing.T) {
         id   = "i-02ae66f368e8518a9"
 
         # (1 unchanged block hidden)
+    }`,
+		},
+		"in-place update - whole block unknown": {
+			Action: plans.Update,
+			Mode:   addrs.ManagedResourceMode,
+			Before: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-BEFORE"),
+				"disk": cty.ObjectVal(map[string]cty.Value{
+					"mount_point": cty.StringVal("/var/diska"),
+					"size":        cty.StringVal("50GB"),
+				}),
+				"root_block_device": cty.ObjectVal(map[string]cty.Value{
+					"volume_type": cty.StringVal("gp2"),
+					"new_field":   cty.StringVal("new_value"),
+				}),
+			}),
+			After: cty.ObjectVal(map[string]cty.Value{
+				"id":  cty.StringVal("i-02ae66f368e8518a9"),
+				"ami": cty.StringVal("ami-AFTER"),
+				"disk": cty.ObjectVal(map[string]cty.Value{
+					"mount_point": cty.StringVal("/var/diska"),
+					"size":        cty.StringVal("50GB"),
+				}),
+				"root_block_device": cty.UnknownVal(cty.Object(map[string]cty.Type{
+					"volume_type": cty.String,
+					"new_field":   cty.String,
+				})),
+			}),
+			RequiredReplace: cty.NewPathSet(),
+			Schema:          testSchemaPlus(configschema.NestingSingle),
+			ExpectedOutput: `  # test_instance.example will be updated in-place
+  ~ resource "test_instance" "example" {
+      ~ ami  = "ami-BEFORE" -> "ami-AFTER"
+        id   = "i-02ae66f368e8518a9"
+        # (1 unchanged attribute hidden)
+
+      ~ root_block_device {
+          ~ new_field   = "new_value" -> (known after apply)
+          ~ volume_type = "gp2" -> (known after apply)
+        } -> (known after apply)
     }`,
 		},
 	}

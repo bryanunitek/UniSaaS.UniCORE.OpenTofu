@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/command/clistate"
@@ -19,6 +18,23 @@ import (
 	"github.com/opentofu/opentofu/internal/tfdiags"
 	"github.com/opentofu/opentofu/internal/tofu"
 )
+
+func StateReplaceProviderCommander() Command {
+	cmd := Command{
+		Name:  "replace-provider",
+		Short: "Replace provider in the state",
+		Long:  `Replace provider for resources in the OpenTofu state.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindStateReplaceProvider(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return StateReplaceProviderCommand{StateMeta{meta}}.Execute(args, views.NewState(args.View, meta.View))
+	}
+
+	return cmd
+}
 
 // StateReplaceProviderCommand is a Command implementation that allows users
 // to change the provider associated with existing resources. This is only
@@ -29,36 +45,12 @@ type StateReplaceProviderCommand struct {
 }
 
 func (c *StateReplaceProviderCommand) Run(rawArgs []string) int {
+	return RunCommand(StateReplaceProviderCommander(), c.Meta, rawArgs)
+}
+func (c StateReplaceProviderCommand) Execute(args *arguments.StateReplaceProvider, view views.State) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
-
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseReplaceProvider(rawArgs)
-	defer closer()
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewState(args.ViewOptions, c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		if args.ViewOptions.ViewType == arguments.ViewJSON {
-			return 1 // We don't want to print the help of the command in JSON view
-		}
-		return cli.RunResultHelp
-	}
-	// TODO meta-refactor: remove these assignments once there is a clear way to propagate these to the place
-	//   where are used
-	c.backupPath = args.BackupPath
-	c.statePath = args.StatePath
-	c.stateLock = args.Backend.StateLock
-	c.stateLockTimeout = args.Backend.StateLockTimeout
-	c.ignoreRemoteVersion = args.Backend.IgnoreRemoteVersion
-	c.Meta.variableArgs = args.Vars.All()
 
 	if diags := c.Meta.checkRequiredVersion(ctx); diags != nil {
 		view.Diagnostics(diags)
@@ -103,8 +95,8 @@ func (c *StateReplaceProviderCommand) Run(rawArgs []string) int {
 	}
 
 	// Acquire lock if requested
-	if c.stateLock {
-		stateLocker := clistate.NewLocker(c.stateLockTimeout, view.Backend().StateLocker())
+	if c.stateArgs.Lock {
+		stateLocker := clistate.NewLocker(c.stateArgs.LockTimeout, view.Backend().StateLocker())
 		if diags := stateLocker.Lock(stateMgr, "state-replace-provider"); diags.HasErrors() {
 			view.Diagnostics(diags)
 			return 1

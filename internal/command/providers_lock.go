@@ -6,20 +6,23 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/command/arguments"
+	"github.com/opentofu/opentofu/internal/command/cliconfig/ociauthconfig"
 	"github.com/opentofu/opentofu/internal/command/views"
 	"github.com/opentofu/opentofu/internal/depsfile"
 	"github.com/opentofu/opentofu/internal/getproviders"
+	"github.com/opentofu/opentofu/internal/oci"
 	"github.com/opentofu/opentofu/internal/providercache"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 	"github.com/opentofu/opentofu/internal/tracing"
 	"github.com/opentofu/opentofu/internal/tracing/traceattrs"
+	"github.com/opentofu/svchost/uritemplates"
 )
 
 type providersLockChangeType string
@@ -29,6 +32,29 @@ const (
 	providersLockChangeTypeNewProvider providersLockChangeType = "providersLockChangeTypeNewProvider"
 	providersLockChangeTypeNewHashes   providersLockChangeType = "providersLockChangeTypeNewHashes"
 )
+
+func ProvidersLockCommander() Command {
+	cmd := Command{
+		Name:  "lock",
+		Short: "Write out dependency locks for the configured providers",
+		Long: `Normally the dependency lock file (.terraform.lock.hcl) is updated automatically by "tofu init", but the information available to the normal provider installer can be constrained when you're installing providers from filesystem or network mirrors, and so the generated lock file can end up incomplete.
+
+The "providers lock" subcommand addresses that by updating the lock file based on the official packages available in the origin registry, ignoring the currently-configured installation strategy.
+
+After this command succeeds, the lock file will contain suitable checksums to allow installation of the providers needed by the current configuration on all of the selected platforms.
+
+By default this command updates the lock file for every provider declared in the configuration. You can override that behavior by providing one or more provider source addresses on the command line.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindProvidersLock(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return ProvidersLockCommand{meta}.Execute(args, views.NewProvidersLock(args.View, meta.View))
+	}
+
+	return cmd
+}
 
 // ProvidersLockCommand is a Command implementation that implements the
 // "tofu providers lock" command, which creates or updates the current
@@ -44,32 +70,14 @@ func (c *ProvidersLockCommand) Synopsis() string {
 }
 
 func (c *ProvidersLockCommand) Run(rawArgs []string) int {
+	return RunCommand(ProvidersLockCommander(), c.Meta, rawArgs)
+}
+func (c ProvidersLockCommand) Execute(args *arguments.ProvidersLock, view views.ProvidersLock) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
 	ctx, span := tracing.Tracer().Start(ctx, "Providers lock")
 	defer span.End()
-
-	// new view
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseProvidersLock(rawArgs)
-	defer closer()
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewProvidersLock(args.ViewOptions, c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		if args.ViewOptions.ViewType == arguments.ViewJSON {
-			return 1 // in case it's json, do not print the help of the command
-		}
-		return cli.RunResultHelp
-	}
-	c.Meta.variableArgs = args.Vars.All()
 
 	span.SetAttributes(traceattrs.StringSlice("opentofu.provider.lock.targetplatforms", args.OptPlatforms))
 	if args.FsMirrorDir != "" {
@@ -77,6 +85,9 @@ func (c *ProvidersLockCommand) Run(rawArgs []string) int {
 	}
 	if args.NetMirrorURL != "" {
 		span.SetAttributes(traceattrs.String("opentofu.provider.lock.netmirror", args.NetMirrorURL))
+	}
+	if args.OciMirrorTemplate != "" {
+		span.SetAttributes(traceattrs.String("opentofu.provider.lock.ocimirror", args.OciMirrorTemplate))
 	}
 
 	providerStrs := args.Providers
@@ -137,6 +148,30 @@ func (c *ProvidersLockCommand) Run(rawArgs []string) int {
 		// don't use this client directly.
 		httpTimeout := c.registryHTTPClient(ctx).HTTPClient.Timeout
 		source = getproviders.NewHTTPMirrorSource(ctx, u, c.Services.CredentialsSource(), httpTimeout, c.ProviderSourceLocationConfig)
+	case args.OciMirrorTemplate != "":
+		source = getproviders.NewOCIRegistryMirrorSource(
+			ctx,
+			func(addr addrs.Provider) (registryDomain string, repositoryName string, err error) {
+				uri, err := uritemplates.ExpandLevel1(args.OciMirrorTemplate, map[string]string{
+					"hostname":  addr.Hostname.String(),
+					"namespace": addr.Namespace,
+					"type":      addr.Type,
+				})
+				if err != nil {
+					return "", "", fmt.Errorf("error while expanding uri template: %w", err)
+				}
+
+				return ociauthconfig.ParseRepositoryAddressPrefix(uri)
+			},
+			func(ctx context.Context, registryDomain, repositoryName string) (getproviders.OCIRepositoryStore, error) {
+				credsPolicy, err := c.OCICredentialsPolicyBuilder(ctx)
+				if err != nil {
+					// This deals with only a small number of errors that we can't catch during CLI config validation
+					return nil, fmt.Errorf("invalid credentials configuration for OCI registries: %w", err)
+				}
+				return oci.GetOCIRepositoryStore(ctx, registryDomain, repositoryName, credsPolicy)
+			},
+		)
 	default:
 		// With no special options we consult upstream registries directly,
 		// because that gives us the most information to produce as complete
@@ -396,6 +431,19 @@ Options:
                      of valid checksums will be limited only to what OpenTofu
                      can learn from the data in the mirror indices.
 
+  -oci-mirror=tmpl   Consult the given OCI registry mirror (given as a template)
+					 instead of the origin registry for each of the given
+					 providers.
+
+                     This would be necessary to generate lock file entries for
+                     a provider that is available only via an OCI mirror, and
+                     not published in an upstream registry.
+
+					 The argument is a Level 1 URI template as defined by RFC 6570,
+					 used to map provider source addresses to OCI repository
+					 addresses. The template can contain {hostname} {namespace}
+					 and {type}.
+
   -platform=os_arch  Choose a target platform to request package checksums
                      for.
 
@@ -419,8 +467,8 @@ Options:
                      Use this option more than once to include more than one
                      variables file.
 
-  -json               Produce output in a machine-readable JSON format, 
-                      suitable for use in text editor integrations and other 
+  -json               Produce output in a machine-readable JSON format,
+                      suitable for use in text editor integrations and other
                       automated systems. Always disables color.
 
   -json-into=out.json Produce the same output as -json, but sent directly

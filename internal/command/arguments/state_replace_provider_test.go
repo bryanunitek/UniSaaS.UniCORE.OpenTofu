@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseReplaceProvider_basicValidation(t *testing.T) {
@@ -38,7 +40,7 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 		"custom backup path": {
 			args: []string{"-backup=/path/to/backup.tfstate", "source", "dest"},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
-				srp.BackupPath = "/path/to/backup.tfstate"
+				srp.State.BackupPath = "/path/to/backup.tfstate"
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
 			}),
@@ -46,7 +48,7 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 		"custom state path": {
 			args: []string{"-state=/path/to/state.tfstate", "source", "dest"},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
-				srp.StatePath = "/path/to/state.tfstate"
+				srp.State.StatePath = "/path/to/state.tfstate"
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
 			}),
@@ -54,8 +56,8 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 		"only lock-timeout": {
 			args: []string{"-lock-timeout=10s", "source", "dest"},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
-				srp.Backend.StateLock = true
-				srp.Backend.StateLockTimeout = 10 * time.Second
+				srp.State.Lock = true
+				srp.State.LockTimeout = 10 * time.Second
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
 			}),
@@ -63,7 +65,7 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 		"disable locking": {
 			args: []string{"-lock=false", "source", "dest"},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
-				srp.Backend.StateLock = false
+				srp.State.Lock = false
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
 			}),
@@ -81,34 +83,39 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 			},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
 				srp.AutoApprove = true
-				srp.BackupPath = "/path/to/backup.tfstate"
-				srp.StatePath = "/path/to/state.tfstate"
-				srp.Backend.StateLockTimeout = 15 * time.Second
-				srp.Backend.StateLock = true
+				srp.State.BackupPath = "/path/to/backup.tfstate"
+				srp.State.StatePath = "/path/to/state.tfstate"
+				srp.State.LockTimeout = 15 * time.Second
+				srp.State.Lock = true
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
-				// Vars would be updated, but we ignore it in cmp
+				srp.Vars = &Vars{{Name: "-var", Value: "key=value"}}
 			}),
 		},
 		"no arguments": {
 			args:        []string{},
 			want:        stateReplaceProviderArgsWithDefaults(nil),
-			wantErrText: "Invalid number of arguments",
+			wantErrText: "Expected exactly two positional arguments",
 		},
 		"only one argument": {
-			args:        []string{"source"},
-			want:        stateReplaceProviderArgsWithDefaults(nil),
-			wantErrText: "Invalid number of arguments",
+			args: []string{"source"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.RawSrcAddr = "source"
+			}),
+			wantErrText: "Expected exactly two positional arguments",
 		},
 		"too many arguments": {
-			args:        []string{"source", "dest", "extra"},
-			want:        stateReplaceProviderArgsWithDefaults(nil),
-			wantErrText: "Invalid number of arguments",
+			args: []string{"source", "dest", "extra"},
+			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
+				srp.RawSrcAddr = "source"
+				srp.RawDestAddr = "dest"
+			}),
+			wantErrText: "Expected exactly two positional arguments",
 		},
 		"json without auto-approve": {
 			args: []string{"-json", "source", "dest"},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
-				srp.ViewOptions.ViewType = ViewJSON
+				srp.View.ViewType = ViewJSON
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
 			}),
@@ -117,7 +124,7 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 		"json with auto-approve": {
 			args: []string{"-json", "-auto-approve", "source", "dest"},
 			want: stateReplaceProviderArgsWithDefaults(func(srp *StateReplaceProvider) {
-				srp.ViewOptions.ViewType = ViewJSON
+				srp.View.ViewType = ViewJSON
 				srp.AutoApprove = true
 				srp.RawSrcAddr = "source"
 				srp.RawDestAddr = "dest"
@@ -126,8 +133,7 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 	}
 
 	cmpOpts := cmp.Options{
-		cmpopts.IgnoreUnexported(Vars{}, ViewOptions{}),
-		cmpopts.IgnoreFields(ViewOptions{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
 	}
 
 	for name, tc := range testCases {
@@ -155,18 +161,24 @@ func TestParseReplaceProvider_basicValidation(t *testing.T) {
 func stateReplaceProviderArgsWithDefaults(mutate func(srp *StateReplaceProvider)) *StateReplaceProvider {
 	ret := &StateReplaceProvider{
 		AutoApprove: false,
-		BackupPath:  "-",
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: false,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
-		Backend: Backend{
+		Backend: &Backend{
 			IgnoreRemoteVersion: false,
-			StateLock:           true,
-			StateLockTimeout:    0,
 		},
 		Vars: &Vars{},
+		State: &State{
+			Lock: true,
+			// Because the backup flag is registered with a different default value
+			BackupPath: "-",
+		},
 	}
+	// Because the default value is different on this command
 	if mutate != nil {
 		mutate(ret)
 	}
