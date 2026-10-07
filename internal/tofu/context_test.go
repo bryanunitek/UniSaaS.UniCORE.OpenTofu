@@ -901,7 +901,7 @@ func legacyDiffComparisonString(changes *plans.Changes) string {
 		fmt.Fprintf(&buf, "%s:\n", moduleKey)
 		s := bufio.NewScanner(&mBuf)
 		for s.Scan() {
-			buf.WriteString(fmt.Sprintf("  %s\n", s.Text()))
+			fmt.Fprintf(&buf, "  %s\n", s.Text())
 		}
 	}
 
@@ -939,6 +939,7 @@ func assertNoErrors(t testing.TB, diags tfdiags.Diagnostics) {
 // before comparing them, though diagnostics only have a partial order so that
 // will not totally normalize the ordering of all diagnostics sets.
 func assertDiagnosticsMatch(t testing.TB, got, want tfdiags.Diagnostics) {
+	t.Helper()
 	got = got.ForRPC()
 	want = want.ForRPC()
 	got.Sort()

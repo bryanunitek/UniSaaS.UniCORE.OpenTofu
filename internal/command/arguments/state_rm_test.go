@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseStateRm_basicValidation(t *testing.T) {
@@ -42,28 +44,28 @@ func TestParseStateRm_basicValidation(t *testing.T) {
 		"custom backup path": {
 			args: []string{"-backup=/path/to/backup.tfstate", "resource.foo"},
 			want: stateRmArgsWithDefaults(func(stateRm *StateRm) {
-				stateRm.BackupPath = "/path/to/backup.tfstate"
+				stateRm.State.BackupPath = "/path/to/backup.tfstate"
 				stateRm.TargetAddrs = []string{"resource.foo"}
 			}),
 		},
 		"custom state path": {
 			args: []string{"-state=/path/to/state.tfstate", "resource.foo"},
 			want: stateRmArgsWithDefaults(func(stateRm *StateRm) {
-				stateRm.StatePath = "/path/to/state.tfstate"
+				stateRm.State.StatePath = "/path/to/state.tfstate"
 				stateRm.TargetAddrs = []string{"resource.foo"}
 			}),
 		},
 		"only lock-timeout": {
 			args: []string{"-lock-timeout=10s", "resource.foo"},
 			want: stateRmArgsWithDefaults(func(stateRm *StateRm) {
-				stateRm.Backend.StateLockTimeout = 10 * time.Second
+				stateRm.State.LockTimeout = 10 * time.Second
 				stateRm.TargetAddrs = []string{"resource.foo"}
 			}),
 		},
 		"disable locking": {
 			args: []string{"-lock=false", "resource.foo"},
 			want: stateRmArgsWithDefaults(func(stateRm *StateRm) {
-				stateRm.Backend.StateLock = false
+				stateRm.State.Lock = false
 				stateRm.TargetAddrs = []string{"resource.foo"}
 			}),
 		},
@@ -80,12 +82,12 @@ func TestParseStateRm_basicValidation(t *testing.T) {
 			},
 			want: stateRmArgsWithDefaults(func(stateRm *StateRm) {
 				stateRm.DryRun = true
-				stateRm.BackupPath = "/path/to/backup.tfstate"
-				stateRm.StatePath = "/path/to/state.tfstate"
-				stateRm.Backend.StateLockTimeout = 15 * time.Second
-				stateRm.Backend.StateLock = true
+				stateRm.State.BackupPath = "/path/to/backup.tfstate"
+				stateRm.State.StatePath = "/path/to/state.tfstate"
+				stateRm.State.LockTimeout = 15 * time.Second
+				stateRm.State.Lock = true
 				stateRm.TargetAddrs = []string{"resource.foo", "resource.bar"}
-				// Vars would be updated, but we ignore it in cmp
+				stateRm.Vars = &Vars{{Name: "-var", Value: "key=value"}}
 			}),
 		},
 		"no arguments": {
@@ -96,8 +98,7 @@ func TestParseStateRm_basicValidation(t *testing.T) {
 	}
 
 	cmpOpts := cmp.Options{
-		cmpopts.IgnoreUnexported(Vars{}, ViewOptions{}, State{}),
-		cmpopts.IgnoreFields(ViewOptions{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
 	}
 
 	for name, tc := range testCases {
@@ -124,18 +125,24 @@ func TestParseStateRm_basicValidation(t *testing.T) {
 
 func stateRmArgsWithDefaults(mutate func(stateRm *StateRm)) *StateRm {
 	ret := &StateRm{
-		DryRun:     false,
-		BackupPath: "-",
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: false,
+		TargetAddrs: []string{},
+		DryRun:      false,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
-		Backend: Backend{
+		Backend: &Backend{
 			IgnoreRemoteVersion: false,
-			StateLock:           true,
-			StateLockTimeout:    0,
 		},
 		Vars: &Vars{},
+		State: &State{
+			Lock: true,
+			// Because the default value is different on this command
+			BackupPath: "-",
+		},
 	}
 	if mutate != nil {
 		mutate(ret)

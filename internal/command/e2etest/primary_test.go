@@ -51,8 +51,8 @@ func TestPrimarySeparatePlan(t *testing.T) {
 
 	// Make sure we actually downloaded the plugins, rather than picking up
 	// copies that might be already installed globally on the system.
-	if !strings.Contains(stdout, "Installing hashicorp/template v") {
-		t.Errorf("template provider download message is missing from init output:\n%s", stdout)
+	if !strings.Contains(stdout, "Installing hashicorp/cloudinit v") {
+		t.Errorf("cloudinit provider download message is missing from init output:\n%s", stdout)
 		t.Logf("(this can happen if you have a copy of the plugin in one of the global plugin search dirs)")
 	}
 	if !strings.Contains(stdout, "Installing hashicorp/null v") {
@@ -124,7 +124,7 @@ func TestPrimarySeparatePlan(t *testing.T) {
 	sort.Strings(gotResources)
 
 	wantResources := []string{
-		"data.template_file.test",
+		"data.cloudinit_config.test",
 		"null_resource.test",
 	}
 
@@ -461,7 +461,24 @@ Changes to Outputs:
 					`simple_resource.test_res (local-exec): visible test value`,
 					`simple_resource.test_res (local-exec): \"visible test value\"`,
 				}, true},
-				outputCheckContains{[]string{"simple_resource.test_res (local-exec): (output suppressed due to ephemeral value in config)"}, true},
+				// https://github.com/opentofu/opentofu/pull/3931#discussion_r2983258136
+				// Ephemeral values can be shown on local provisioners, they do not need to be hidden
+				outputCheckContains{[]string{
+					`simple_resource.test_res (local-exec): Executing: ["/bin/sh" "-c" "echo \"visible plan_val-ephemeral_val-with-renew\""]`,
+					`simple_resource.test_res (local-exec): Executing: ["cmd" "/C" "echo \"visible plan_val-ephemeral_val-with-renew\""]`,
+				}, true},
+				outputCheckContains{[]string{
+					`simple_resource.test_res (local-exec): visible plan_val-ephemeral_val-with-renew`,
+					`simple_resource.test_res (local-exec): \"visible plan_val-ephemeral_val-with-renew\"`,
+				}, true},
+				outputCheckContains{[]string{
+					`simple_resource.test_res (local-exec): Executing: ["/bin/sh" "-c" "echo \"visible ephemeral_val\""]`,
+					`simple_resource.test_res (local-exec): Executing: ["cmd" "/C" "echo \"visible ephemeral_val\""]`,
+				}, true},
+				outputCheckContains{[]string{
+					`simple_resource.test_res (local-exec): visible ephemeral_val`,
+					`simple_resource.test_res (local-exec): \"visible ephemeral_val\"`,
+				}, true},
 			}
 			out := stripAnsi(stdout)
 
@@ -666,6 +683,66 @@ func TestEphemeralRepetitionData(t *testing.T) {
 
 }
 
+func TestApplyPanic(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("due to locked file descriptors not being immediately cleaned up on panic")
+	}
+
+	if !canRunGoBuild {
+		t.Skip("custom build required with additional LDFLAGS")
+	}
+
+	e2eTofuBin := e2e.GoBuild("github.com/opentofu/opentofu/cmd/tofu", "tofu_e2e", `-ldflags=-X 'main.e2eTestingFeatures=yes'`)
+	defer func() {
+		os.Remove(e2eTofuBin)
+	}()
+
+	tf := e2e.NewBinary(t, e2eTofuBin, "testdata/apply-panic")
+	buildSimpleProvider(t, "6", tf.WorkDir(), "simple")
+	{ // INIT
+		_, stderr, err := tf.Run("init", "-plugin-dir=./cache")
+		if err != nil {
+			t.Fatalf("unexpected init error: %s\nstderr:\n%s", err, stderr)
+		}
+	}
+
+	{ // APPLY
+		// Force panic on the second resource
+		tf.AddEnv("TOFU_E2E_APPLY_RESOURCE_PANIC=simple_resource.bar")
+
+		_, stderr, err := tf.Run("apply", "-auto-approve")
+		if err == nil {
+			t.Errorf("expected to have an error during apply but got nothing. output:\n%s", stderr)
+		}
+
+		if !strings.Contains(stderr, "Graph Traversal Panic") {
+			t.Errorf("Expected graph panic, got %s", stderr)
+		}
+		if !strings.Contains(stderr, "Crash simulating a critical programming error in the apply process, this should produce an errored.tfstate file") {
+			t.Errorf("Expected graph panic, got %s", stderr)
+		}
+		_, err = tf.LocalState()
+		if err == nil {
+			t.Error("Expected empty local state due to crash")
+		}
+
+		state, err := tf.StateFromFile("errored.tfstate")
+		if err != nil {
+			t.Errorf("Expected errored.tfstate to exist: %s", err.Error())
+		}
+
+		stateResources := state.RootModule().Resources
+		if _, ok := stateResources["simple_resource.foo"]; !ok {
+			t.Error("Expected simple_resource.foo in state")
+		}
+		if _, ok := stateResources["simple_resource.bar"]; !ok {
+			t.Error("Expected simple_resource.bar (stub) in state")
+		}
+	}
+}
+
 // This function builds and moves to a directory called "cache" inside the workdir,
 // the version of the provider passed as argument.
 // Instead of using this function directly, the pre-configured functions buildV5TestProvider and
@@ -716,6 +793,23 @@ func buildSimpleProvider(t *testing.T, version string, workdir string, buildOutN
 	providerFinalBinaryFilePath := filepath.Join(workdir, hashiDir, fmt.Sprintf("%s/0.0.1/", providerBinFileName), platform, fmt.Sprintf("terraform-provider-%s", providerBinFileName)) + extension
 	if err := os.Rename(providerTmpBinPath, providerFinalBinaryFilePath); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type outputCheckNumberOfOccurrences struct {
+	token             string
+	wantedOccurrences int
+}
+
+func (oe outputCheckNumberOfOccurrences) check(t *testing.T, hint, in string) {
+	var found int
+	for line := range strings.SplitSeq(in, "\n") {
+		if strings.Contains(line, oe.token) {
+			found++
+		}
+	}
+	if oe.wantedOccurrences != found {
+		t.Errorf("[%s] different number of occurrences %q. Wanted %d but got %d\nout:%s", hint, oe.token, oe.wantedOccurrences, found, in)
 	}
 }
 

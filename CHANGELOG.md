@@ -1,98 +1,95 @@
-The v1.12.x release series is supported until **February 1 2027**.
+The v1.13.x release series is supported until **August 1 2027**.
 
-## 1.12.1
-
-SECURITY ADVISORIES:
-
-* Previous releases in the v1.12 series could be affected by several vulnerabilities:
-  * ssh usage through OpenTofu generate hangs or panics.
-  * Previously, a revoked 'SignatureKey' belonging to a CA was not correctly checked for revocation. Now, both the 'key' and 'key.SignatureKey' are checked for @revoked.
-
-  This is fixed now by ([#4145](https://github.com/opentofu/opentofu/pull/4145))
+## 1.13.1
 
 BUG FIXES:
 
-- Address a bug introduced in v1.12.0 causing excessive memory usage by providers. ([#4126](https://github.com/opentofu/opentofu/pull/4126))
-- Address a bug introduced in v1.12.0 where `replace_triggered_by` was validated incorrectly. ([#4133](https://github.com/opentofu/opentofu/pull/4133)
-- The Azure key provider will now accept the `tenant_id`, `subscription_id`, `environment`, and `metadata_host` variables; a bug previously only allowed these to be set through environment variables. ([#4091](https://github.com/opentofu/opentofu/issues/4091))
+- `tofu show -json <planfile>` now works again when ephemeral resources are present in the configuration. ([4623](https://github.com/opentofu/opentofu/pull/4623)).
+-  Ephemeral output values are now always re-evaluated during the apply phase, instead of sometimes using stale values from the planning phase. ([#4582](https://github.com/opentofu/opentofu/issues/4582))
 
-## 1.12.0
+## 1.13.0
 
 UPGRADE NOTES:
 
-- The "winrm" connection type for the `remote-exec` and `file` provisioners is now deprecated. ([#3899](https://github.com/opentofu/opentofu/issues/3899))
+- The "winrm" connection type for provisioners is no longer supported. ([#4012](https://github.com/opentofu/opentofu/pull/4012))
 
-    The library ecosystem around the WinRM protocol is no longer in a healthy state, with some libraries unmaintained. Therefore we cannot continue to offer this functionality, and will phase it out over the next few release series. In OpenTofu v1.12 this connection type is still supported, but will generate a warning each time it is used. We expect that use of this connection type will begin returning an error in OpenTofu v1.13.
+    This connection type was deprecated in OpenTofu v1.12, and now removed in v1.13. Some of the upstream libraries OpenTofu was using to implement these features are no longer maintained, so it's not viable for us to offer this anymore.
 
-    [Modern Windows versions now support OpenSSH](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse), and so we suggest that anyone currently relying on WinRM should begin planning to migrate to using SSH instead.
+    [Modern Windows versions now support OpenSSH](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse), and so we suggest that anyone currently relying on WinRM plan to migrate to using SSH instead.
 
-- The `OPENTOFU_USER_AGENT` environment variable, which allowed fully overriding the default User-Agent header on all HTTP requests, has been removed.
-- This is the last OpenTofu release series that will support macOS 12 Monterey. We expect that OpenTofu v1.13 will require macOS 13 Ventura or later.
-- On Unix systems OpenTofu now considers the `BROWSER` environment variable as a possible override for the default behavior for launching a web browser.
 
-    If you run OpenTofu in a context where an environment variable of that name is already set, it may cause OpenTofu to now open a web browser in a different way than previous versions would have. Unsetting that environment variable will restore the previous platform-specific behavior.
+- The `base64gzip` function now generates results that are equivalent to _but not equal to_ the results from previous releases, as a result of a new optimized DEFLATE compression implementation.
 
-- If you are installing providers from the registry (most users), you should expect to see additional `h1:value` provider hashes in your `.terraform.lock.hcl` file.
+    If you use this function as part of an argument to a managed resource then OpenTofu is likely to propose to update or replace the instances of that resource, depending on how the provider responds to the differing base64 data. The new compressed form should nonetheless still decompress to the same sequence of bytes.
 
-    We have improved the OpenTofu registry to serve both `zh:value` and `h1:value` hashes, as well as instructing OpenTofu in how to integrate this data into its existing provider trust chain. Including these additional hashes will reduce friction in cross-platform environments. These and other related changes below should subsume the need to use `tofu providers lock` in most scenarios, simplifying many existing cross-platform workflows. For more information, see the [corresponding RFC](rfc/20251027-provider-registry-hashes.md) and [discussion](https://github.com/opentofu/opentofu/pull/3434)
+- OpenTofu on macOS now requires macOS 13 Ventura or later. Earlier versions are no longer supported.
 
-- The OpenTofu project is planning to stop providing official release packages for 32-bit CPU architectures (`*_386` and `*_arm` platforms) in a future release series.
+- OpenTofu v1.13 is the final release series that will include official builds for 32-bit CPU architectures (`*_386` and `*_arm` platforms).
 
-    We intend to continue producing packages for these platforms at least throughout the v1.12.x and v1.13.x series and so no immediate action is required, but if you are currently relying on our official packages for these platforms then we suggest that you begin planning to migrate to running OpenTofu on a 64-bit CPU architecture (`*_amd64` or `*_arm64` platforms).
+    If you are currently relying on our official releases of OpenTofu on one of these platforms then we suggest that you begin planning to migrate to running OpenTofu on a 64-bit CPU architecture (`*_amd64` or `*_arm64` platforms) before the v1.13 series reaches end-of-life.
+
+    Third parties may continue to offer their own OpenTofu builds targeting platforms that we don't officially support. This only affects the official packages published directly by the OpenTofu project in this repository's release artifacts.
+
+- There are various minor changes to the robustness of file format and wire format parsers in the SSH client implementation used for remote provisioners.
+
+    This may cause certain invalid input that was previously accepted to now be rejected, in an attempt to better match the expectations of other implementations of these protocols and formats.
+
+EXPERIMENTS:
+
+- Symbol Libraries are now available as an experimental feature ([#4052](https://github.com/opentofu/opentofu/pull/4052))
+
+    This new feature adds the capaibility to define re-usable functions and types in hcl-lang based libraries. As this introduces a drastically different way of building modules and sharing functionality, we are looking for early feedback on the design of the language and how it integrates into OpenTofu workflows. If you are interested in this functionality, you can enable to experiment by adding the appropriate experiment to the experiments list in the language block. As it is experimental, it is subject to change before it is marked as stable and should not be relied upon in production.
+- Basic linting support introduced ([#4310](https://github.com/opentofu/opentofu/issues/4310))
+    
+    The linting support can be enabled by using the `-lint` flag on the supported commands. By doing so, OpenTofu will run the selected linting rules against the configuration given to OpenTofu and will show warning diagnostics if any issue is found. The functionality is marked as experimental because this is just a first iteration and we want to see how users interact with it and how useful they find it.
 
 ENHANCEMENTS:
 
-- A `prevent_destroy` argument in the `lifecycle` block for managed resources can now refer to other symbols in the same module, such as to the module's input variables. ([#3474](https://github.com/opentofu/opentofu/issues/3474), [#3507](https://github.com/opentofu/opentofu/issues/3507))
-- New `lifecycle` meta-argument `destroy`: when set to `false` OpenTofu will plan to just remove the affected object from state without asking the provider to destroy it first, similar to `destroy = false` in `removed` blocks. ([#3409](https://github.com/opentofu/opentofu/pull/3409))
-- Comparing an object or other complex-typed value to `null` using the `==` operator now returns a sensitive boolean result only if the object as a whole is sensitive, and not when the object merely contains a sensitive value nested inside one of its attributes. This means that comparisons to null can now be used in parts of the configuration where sensitive values are not allowed, such as in the `enabled` meta-argument on resources and modules. ([#3793](https://github.com/opentofu/opentofu/pull/3793))
-- Resources using `replace_triggered_by` in their `lifecycle` block are now replaced when a resource they refer to is itself being replaced, whereas before this triggered only when it was being updated. ([#3714](https://github.com/opentofu/opentofu/issues/3714))
-- `import` blocks now allow describing the object to be imported using an object matching the resource type's _identity schema_ using the `identity` argument, instead of just a plain string using the `id` argument. ([#3671](https://github.com/opentofu/opentofu/pull/3671))
-- OpenTofu now produces warnings for any references to attributes or blocks of a resource type that are marked as deprecated in the provider schema, unless disabled by the `-deprecation=` option. ([#3973](https://github.com/opentofu/opentofu/pull/3973/))
-- The `yamldecode` function now supports the "merge" tag, most commonly written as `<<` where a map key would be expected, with sequences of mappings rather than just individual mappings. ([#3607](https://github.com/opentofu/opentofu/pull/3607))
-- A new configuration block type `language` offers a more general way to define version constraints that separates OpenTofu constraints from other software. Note that module authors should delay adopting this new syntax until they are ready to require OpenTofu v1.12.0 or later, but there is an interim solution available that is backward-compatible with earlier OpenTofu versions. ([#3300](https://github.com/opentofu/opentofu/issues/3300))
-- Input variables can now be declared as `const = true` to require that the assigned value is compatible with static evaluation. ([#3946](https://github.com/opentofu/opentofu/pull/3946))
-- New CLI argument `-json-into=<outfile>` allows emitting both human-readable and machine-readable logs. ([#3606](https://github.com/opentofu/opentofu/pull/3606))
-- Provider installation now makes concurrent requests to download provider packages, which may allow `tofu init` to complete faster. ([#2729](https://github.com/opentofu/opentofu/pull/2729))
-- Provider checksum verification and schema loading are now better optimized, including no longer verifying checksums for providers that are present in the local cache but will not be used by a particular command. ([#2730](https://github.com/opentofu/opentofu/pull/2730))
-- `tofu init` now includes a full set of checksums for all supported platforms when updating a dependency lock file, using additional information now reported by the provider registry. This should remove the need to run `tofu providers lock` in many situations where it was previously required. ([#3868](https://github.com/opentofu/opentofu/pull/3868))
-- The `network_mirror` configuration now includes an option to trust all hashes reported by the mirror. This also simplifies managing lockfiles in cross-platform environments. ([3885](https://github.com/opentofu/opentofu/pull/3885))
-- Module registries can now specify that package downloads should use the same credentials as the registry's API calls, without needing to configure credentials separately in a `.netrc` file. This approach is helpful when the module packages are served by the registry itself, rather than when the registry just links to an external location such as a GitHub repository. ([#3313](https://github.com/opentofu/opentofu/issues/3313))
-- `tofu destroy` now supports `-suppress-forget-errors` to suppress errors and exit with a zero status code when resources are forgotten during destroy operations. ([#3588](https://github.com/opentofu/opentofu/issues/3588))
-- `tofu console` now supports `-lock=false` and `-lock-timeout=DURATION` to control whether and how this command uses state locks. ([#3800](https://github.com/opentofu/opentofu/pull/3800))
-- `tofu login` now uses the `BROWSER` environment variable when launching a web browser on Unix platforms, as long as it's set to a single command that can accept a URL to open as its first and only argument. ([#3456](https://github.com/opentofu/opentofu/issues/3456))
-- Most of the commands now prints the usage text when arguments parsing fails, prints previously legacy error messages as regular diagnostics and received support for JSON output. ([#3941](https://github.com/opentofu/opentofu/pull/3941))
-- The `s3` backend now automatically discovers and uses AWS credentials issued using [the `aws login` command](https://docs.aws.amazon.com/cli/latest/reference/login/) in AWS CLI. ([#3767](https://github.com/opentofu/opentofu/pull/3767))
-- The `azurerm` backend now supports authentication using Azure DevOps and Azure Pipelines workload identity federation. ([#3820](https://github.com/opentofu/opentofu/pull/3820))
-- The `local` backend now writes pretty-printed JSON state files, making diffs more readable when state is tracked in version control. ([#1947](https://github.com/opentofu/opentofu/issues/1947))
-- The `azurerm` backend now supports Customer-Provided Keys(CPK) as well as Customer-Managed Keys(CMK) to enable server-side encryption. ([#3886](https://github.com/opentofu/opentofu/pull/3886))
+- Windows on ARM64 is now an officially-supported platform for OpenTofu itself, though this new platform may not be supported by all available provider plugins. ([#4450](https://github.com/opentofu/opentofu/pull/4450))
+- New function `convert` allows converting a given value to a specified type constraint. ([#4449](https://github.com/opentofu/opentofu/pull/4449))
+- Various new functions named with the prefix `assume...` allow authors to give OpenTofu additional hints about what's expected as the final result of an unknown value, potentially allowing more information to be known during the planning phase. ([#4449](https://github.com/opentofu/opentofu/pull/4449))
+- OpenTofu now uses Unicode 17 algorithms and tables for all string processing that is based on Unicode specifications. ([#4478](https://github.com/opentofu/opentofu/pull/4478))
+- The `gcp_kms` encryption key provider now supports an optional `additional_authenticated_data` as part of the encryption and decryption operations. ([#4287](https://github.com/opentofu/opentofu/pull/4287))
+- The `aws_kms` encryption key provider now supports an `encryption_context` field, allowing key-value string pairs to be passed to AWS KMS with every `GenerateDataKey` and `Decrypt` call. ([#4298](https://github.com/opentofu/opentofu/pull/4298))
+- The `cidrsubnets` function now supports prefix extensions greater than 32 bits when the base CIDR block uses an IPv6 address. ([#4042](https://github.com/opentofu/opentofu/pull/4042))
+- The `openbao` encryption key provider now accepts a new `associated_data` argument, allowing a base64-encoded value to be passed to OpenBao on every data key generation and decryption call. ([#4365](https://github.com/opentofu/opentofu/pull/4365))
+- When installing provider and module packages from OCI Distribution registries, OpenTofu now tracks separate transient credentials for each repository to support registry implementations that issue repository-scoped tokens.  ([#3316](https://github.com/opentofu/opentofu/issues/3316))
+- The `providers lock` command now supports the argument `-oci-mirror`. The functionality mimics that of the field `repository_template` of `oci_mirror`-block in [`provider_installation`](https://opentofu.org/docs/cli/config/config-file/#provider-installation) with the exception of using a URI template instead of a HCL one.
+- `tofu plan` no longer prints the explanatory paragraph that followed the "No changes. Your infrastructure matches the configuration." message, since it only restated that message in more words. ([#4340](https://github.com/opentofu/opentofu/issues/4340))
+- The `local-exec` provisioner now automatically sets the `TRACEPARENT` environment variable in child processes when OpenTelemetry tracing is active, following the W3C Trace Context specification. ([#4014](https://github.com/opentofu/opentofu/issues/4014))
+- When OpenTelemetry trace collection is active, OpenTofu now copies any log lines generated by the OpenTelemetry libraries into its own debug log stream that you can activate using the `TF_LOG` environment variable. ([#4285](https://github.com/opentofu/opentofu/issues/4285))
+- `errored.tfstate` is now produced if OpenTofu encounters a Go runtime panic. This file will be a partial state and is intended for aiding in recovery from a hard crash. ([#4064](https://github.com/opentofu/opentofu/pull/4064))
+- On Windows systems, OpenTofu uses a heuristic to detect when it seems to be running in a legacy terminal emulator that uses a named pipe instead of a true pseudoterminal, such as with Cygwin and MSYS. This heuristic is now updated to be more reliable on recent versions of Windows that report slightly different names for those pipes. ([#4459](https://github.com/opentofu/opentofu/issues/4459))
+- `tofu init` in our official releases when running on a 32-bit CPU architecture now warns about our plan to stop publishing official builds for these platforms starting in OpenTofu v1.14. ([#4018](https://github.com/opentofu/opentofu/issues/4018))
+- Saved plan files now include the provider schemas needed to render the plan, so `tofu show` on a plan file no longer needs to launch the providers where possible. ([#4490](https://github.com/opentofu/opentofu/pull/4490))
+- `tofu test` now supports instances in test resource overrides, including wildcards. ([#4067](https://github.com/opentofu/opentofu/pull/4067))
 
 BUG FIXES:
 
-- During validation and planning phase, `replace_triggered_by` expressions are now checked to ensure that the referenced resource attributes actually exist. ([#3967](https://github.com/opentofu/opentofu/pull/3967))
-value was declared inside the module. ([#3067](https://github.com/opentofu/opentofu/issues/3067))
-- `for_each` arguments in `dynamic` blocks can now call provider-defined functions. ([#3429](https://github.com/opentofu/opentofu/issues/3429))
-- Calls to provider-defined functions in the `id` argument of an `import` block no longer cause "BUG: Uninitialized function provider" error. ([#3803](https://github.com/opentofu/opentofu/issues/3803))
-- `local-exec` and `file` provisioners no longer crash when their `command` or `destination` arguments are set to `null`. ([#3783](https://github.com/opentofu/opentofu/issues/3783))
-- Modules containing nested provider configurations now reject the `enabled` argument, matching the existing behavior for `count`, `for_each`, and `depends_on`. ([#3680](https://github.com/opentofu/opentofu/pull/3680))
-- In JSON syntax, `key_provider` expressions can now use references written directly in quotes, without using template interpolation syntax. Previously only the template syntax was allowed, which was inconsistent with other parts of the encryption configuration. ([#3794](https://github.com/opentofu/opentofu/issues/3794))
-- In JSON syntax, the state encryption method configuration now allows specifying keys using both normal expression syntax and using template interpolation syntax. Previously only the template interpolation syntax was allowed, which was inconsistent with other parts of the encryption configuration. ([#3654](https://github.com/opentofu/opentofu/issues/3654))
-- In module source address syntax, addresses starting with `s3::http://` are now handled as plaintext HTTP requests to the given origin unless it's an official AWS hostname, whereas before OpenTofu just ignored the scheme and used "https" for any URL used with the "s3" address type. ([#3986](https://github.com/opentofu/opentofu/pull/3986))
-- OpenTofu no longer returns spurious errors about incorrectly-detected provider reference problems when modules fail to load during the construction of a configuration tree. ([#3681](https://github.com/opentofu/opentofu/pull/3681))
-- State lock now released correctly when `tofu apply` is interrupted using Ctrl+C while using the `http` backend. ([#3624](https://github.com/opentofu/opentofu/issues/3624))
-- `tofu init` no longer crashes when a module `version` refers to an input variable and the module is used in an expression from a test file. ([#3686](https://github.com/opentofu/opentofu/issues/3686))
-- `tofu test` with `mock_provider` no longer fails during cleanup when a resource's `ignore_changes` argument refers to a block. ([#3644](https://github.com/opentofu/opentofu/issues/3644))
-- In the unlikely event that text included in a diagnostic message includes C0 control characters (e.g. terminal escape sequences), OpenTofu will now replace them with printable characters to avoid the risk of inadvertently changing terminal state when stdout or stderr is a terminal. ([#3479](https://github.com/opentofu/opentofu/issues/3479))
-- The `azurerm` backend's MSI authentication method now respects the provided client ID. ([#3586](https://github.com/opentofu/opentofu/issues/3586))
-- The `gcs` backend now supports a `universe_domain` option to support sovereign GCP services. ([#3758](https://github.com/opentofu/opentofu/issues/3758))
-- OpenTofu now consistently sends "null" to `key_provider "external"` programs when only encryption the key is requested. ([#3672](https://github.com/opentofu/opentofu/pull/3672))
-- Ephemeral resources are not stored in the plan anymore. ([#3897](https://github.com/opentofu/opentofu/pull/3897))
-- `count` cannot use ephemeral values ([#3924](https://github.com/opentofu/opentofu/pull/3924))
--  Powershell support over ssh in the `remote-exec` provisioner has been fixed. ([#3998](https://github.com/opentofu/opentofu/pull/3998))
+- The built-in function `contains` now accepts `null` as its second argument, to test whether a collection contains any null values. ([#4043](https://github.com/opentofu/opentofu/issues/4043))
+- The built-in function `merge` no longer fails when its only argument is a null value of an object type. ([#4043](https://github.com/opentofu/opentofu/issues/4043))
+- The built-in function `cidrhost` no longer returns a "panic" error when called with an out-of-range host number represented in more than 64 bits. ([#4056](https://github.com/opentofu/opentofu/pull/4056))
+- The built-in function `templatestring` no longer returns a "panic" error when its `vars` argument is a wholly sensitive collection; the result is marked sensitive instead. ([#4430](https://github.com/opentofu/opentofu/issues/4430))
+- `tofu workspace new` now includes a hint to use `tofu workspace select` when the given workspace name already exists, instead of just reporting that it already exists. ([#4428](https://github.com/opentofu/opentofu/issues/4428))
+- `tofu apply -json` now emits periodic `apply_progress` heartbeat messages for the full duration of a resource operation, instead of stopping after the first one. ([#4107](https://github.com/opentofu/opentofu/pull/4318))
+- provisioner output is no longer suppressed when `-show-sensitive` is passed. ([#3927](https://github.com/opentofu/opentofu/issues/3927))
+- In the `azurerm` backend's OpenID Connect authorization method, when `audience` is provided as a query parameter in the URL, it will be passed through instead of being overwritten by a default value. ([#4037](https://github.com/opentofu/opentofu/pull/4037))
+- Using `-backend=false` during `tofu init` now skips reading the local encrypted state ([#4077](https://github.com/opentofu/opentofu/pull/4077))
+- Fixed span error status not being set on module fetch failure path during `tofu init`, so observability tools now correctly identify failed spans. ([#4169](https://github.com/opentofu/opentofu/issues/4169))
+- When using OpenTelemetry tracing, the TRACESTATE log message no longer incorrectly prints the TRACEPARENT value. ([#4168](https://github.com/opentofu/opentofu/issues/4168))
+- Fix rendering of plans where a nested block's replacement is unknown. ([#4256](https://github.com/opentofu/opentofu/issues/4256))
+- `removed` blocks with an invalid `from` address and a destroy provisioner now report a configuration error instead of crashing. ([#4321](https://github.com/opentofu/opentofu/pull/4321))
+- `tofu plan -out` no longer fails when the plan includes a resource with `lifecycle { destroy = false }` that needs replacement, which previously errored with `invalid change action ForgetThenCreate`. ([#4324](https://github.com/opentofu/opentofu/issues/4324))
+- `connection.script_path` is escaped correctly not allowing anymore additional commands to be executed on the remote host together with the script path indicated by the argument. ([#4330](https://github.com/opentofu/opentofu/pull/4330))
+- `tofu plan`: Fixed Incorrect warnings produced for `tofu plan -replace=ADDR`. ([#4368](https://github.com/opentofu/opentofu/issues/4368))
+- `tofu plan`: Performance improved for large depends_on chains. ([#4465](https://github.com/opentofu/opentofu/4465))
+- SSH connections through an HTTP proxy now report a connection error instead of crashing when the proxy fails to answer the CONNECT request. ([#4358](https://github.com/opentofu/opentofu/issues/4358))
 
 ## Previous Releases
 
 For information on prior major and minor releases, refer to their changelogs:
 
+- [v1.12](https://github.com/opentofu/opentofu/blob/v1.12/CHANGELOG.md)
 - [v1.11](https://github.com/opentofu/opentofu/blob/v1.11/CHANGELOG.md)
 - [v1.10](https://github.com/opentofu/opentofu/blob/v1.10/CHANGELOG.md)
 - [v1.9](https://github.com/opentofu/opentofu/blob/v1.9/CHANGELOG.md)

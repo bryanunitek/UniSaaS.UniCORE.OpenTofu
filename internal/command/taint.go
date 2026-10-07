@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/command/clistate"
@@ -20,6 +19,35 @@ import (
 	"github.com/opentofu/opentofu/internal/tofu"
 )
 
+func TaintCommander() Command {
+	cmd := Command{
+		Name:  "taint",
+		Short: "Mark a resource instance as not fully functional",
+		Long: `OpenTofu uses the term "tainted" to describe a resource instance which may not be fully functional, either because its creation partially failed or because you've manually marked it as such using
+this command.
+
+This will not modify your infrastructure directly, but subsequent OpenTofu plans will include actions to destroy the remote object and create a new object to replace it.
+
+You can remove the "taint" state from a resource instance using the "tofu untaint" command.
+
+The address is in the usual resource address syntax, such as:
+  aws_instance.foo
+  aws_instance.bar[1]
+  module.foo.module.bar.aws_instance.baz
+
+Use your shell's quoting or escaping syntax to ensure that the address will reach OpenTofu correctly, without any special interpretation.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindTaint(&cmd.CommandLine, true)
+	cmd.Run = func(meta Meta) int {
+		return TaintCommand{meta}.Execute(args, views.NewTaint(args.View, meta.View))
+	}
+
+	return cmd
+}
+
 // TaintCommand is a cli.Command implementation that manually taints
 // a resource, marking it for recreation.
 type TaintCommand struct {
@@ -27,38 +55,13 @@ type TaintCommand struct {
 }
 
 func (c *TaintCommand) Run(rawArgs []string) int {
+	return RunCommand(TaintCommander(), c.Meta, rawArgs)
+}
+func (c TaintCommand) Execute(args *arguments.Taint, view views.Taint) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
 
-	// new view
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseTaint(true, rawArgs)
-	defer closer()
-	// TODO meta-refactor: move these values to their right place once it's clear how to propagate their values to
-	//   the functionality that is using these.
-	c.Meta.backupPath = args.State.BackupPath
-	c.Meta.stateLock = args.State.Lock
-	c.Meta.stateLockTimeout = args.State.LockTimeout
-	c.Meta.statePath = args.State.StatePath
-	c.Meta.stateOutPath = args.State.StateOutPath
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewTaint(args.ViewOptions, c.View)
-
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		if args.ViewOptions.ViewType == arguments.ViewJSON {
-			return 1 // in case it's json, do not print the help of the command
-		}
-		return cli.RunResultHelp
-	}
-	c.Meta.variableArgs = args.Vars.All()
 	addr := args.TargetAddress
 
 	if diags := c.Meta.checkRequiredVersion(ctx); diags != nil {
@@ -113,8 +116,8 @@ func (c *TaintCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	if c.stateLock {
-		stateLocker := clistate.NewLocker(c.stateLockTimeout, view.Backend().StateLocker())
+	if c.stateArgs.Lock {
+		stateLocker := clistate.NewLocker(c.stateArgs.LockTimeout, view.Backend().StateLocker())
 		if diags := stateLocker.Lock(stateMgr, "taint"); diags.HasErrors() {
 			view.Diagnostics(diags)
 			return 1

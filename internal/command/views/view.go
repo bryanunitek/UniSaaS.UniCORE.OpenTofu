@@ -10,11 +10,13 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/mitchellh/colorstring"
+	"github.com/opentofu/opentofu/internal/addrs"
+	"github.com/opentofu/opentofu/internal/collections"
 	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/command/format"
+	"github.com/opentofu/opentofu/internal/linting"
 	"github.com/opentofu/opentofu/internal/terminal"
 	"github.com/opentofu/opentofu/internal/tfdiags"
-	"github.com/opentofu/opentofu/internal/tofu"
 )
 
 // View is the base layer for command views, encapsulating a set of I/O
@@ -28,6 +30,11 @@ type View struct {
 	consolidateWarnings bool
 	consolidateErrors   bool
 
+	// lintInclude and lintExclude contains the linting rules that are used later
+	// to determine if a specific diagnostic should be shown or not based on the
+	// linting rule IDs (or/and groupIDs) that diagnostic is configured with.
+	lintInclude, lintExclude collections.Set[linting.RuleAddr]
+
 	// When this is true it's a hint that OpenTofu is being run indirectly
 	// via a wrapper script or other automation and so we may wish to replace
 	// direct examples of commands to run with more conceptual directions.
@@ -40,7 +47,7 @@ type View struct {
 	concise bool
 
 	// ModuleDeprecationWarnLvl is used to filter out deprecation warnings for outputs and variables as requested by the user.
-	ModuleDeprecationWarnLvl tofu.DeprecationWarningLevel
+	ModuleDeprecationWarnLvl arguments.DeprecationWarningLevel
 
 	// showSensitive is used to display the value of variables marked as sensitive.
 	showSensitive bool
@@ -54,6 +61,11 @@ type View struct {
 	// will be dereferenced as late as possible when rendering diagnostics in
 	// order to access the config loader cache.
 	configSources func() map[string]*hcl.File
+
+	// These other unfortunate warts are required to enable correct deduplication
+	// and filtering of deprecation diagnostics
+	isRemoteModuleSource func(addrs.Module) bool
+	moduleSourceAddrs    func(addrs.Module) addrs.ModuleSource
 }
 
 // Initialize a View with the given streams, a disabled colorize object, and a
@@ -66,7 +78,9 @@ func NewView(streams *terminal.Streams) *View {
 			Disable: true,
 			Reset:   true,
 		},
-		configSources: func() map[string]*hcl.File { return nil },
+		configSources:        func() map[string]*hcl.File { return nil },
+		isRemoteModuleSource: func(addrs.Module) bool { return false },
+		moduleSourceAddrs:    func(addrs.Module) addrs.ModuleSource { return nil },
 		diagsPrinter: func(severity tfdiags.Severity, msg string) {
 			if severity == tfdiags.Error {
 				_, _ = streams.Eprint(msg)
@@ -104,7 +118,11 @@ func (v *View) Configure(view *arguments.View) {
 	v.consolidateWarnings = view.ConsolidateWarnings
 	v.consolidateErrors = view.ConsolidateErrors
 	v.concise = view.Concise
+	v.showSensitive = view.ShowSensitive
 	v.ModuleDeprecationWarnLvl = view.ModuleDeprecationWarnLvl
+
+	v.lintInclude = view.LintInclude
+	v.lintExclude = view.LintExclude
 }
 
 func (v *View) DiagsWithNewline() {
@@ -123,6 +141,14 @@ func (v *View) SetConfigSources(cb func() map[string]*hcl.File) {
 	v.configSources = cb
 }
 
+func (v *View) SetIsRemoteModuleSource(cb func(addrs.Module) bool) {
+	v.isRemoteModuleSource = cb
+}
+
+func (v *View) SetModuleSourceAddrs(cb func(addrs.Module) addrs.ModuleSource) {
+	v.moduleSourceAddrs = cb
+}
+
 // Diagnostics renders a set of warnings and errors in human-readable form.
 // Warnings are printed to stdout, and errors to stderr.
 func (v *View) Diagnostics(diags tfdiags.Diagnostics) {
@@ -134,20 +160,35 @@ func (v *View) Diagnostics(diags tfdiags.Diagnostics) {
 
 	// Filter the deprecation warnings based on the cli arg.
 	var newDiags tfdiags.Diagnostics
-	seen := tofu.DeprecationDiagnosticAllowedSeen{}
+	seen := DeprecationDiagnosticAllowedSeen{}
 	for _, diag := range diags {
-		if !tofu.DeprecationDiagnosticAllowed(v.ModuleDeprecationWarnLvl, diag, seen) {
+		if !v.DeprecationDiagnosticAllowed(diag, seen) {
 			continue
 		}
 		newDiags = append(newDiags, diag)
 	}
 	diags = newDiags
 
+	var lintDiags tfdiags.Diagnostics
+	// Since linting related diagnostics use the Warning severity, we want to extract those out of the
+	// main diagnostics slice before consolidating warning diagnostics. These are merged again later.
+	diags, lintDiags = diags.SplitLint()
+	// Because of the in-context linting hints, this should not be necessary but it's just a guard in case
+	// there is any linting rule included without using the in-context linting hints.
+	lintDiags = lintDiags.FilterLint(v.lintInclude, v.lintExclude)
+
 	if v.consolidateWarnings {
-		diags = diags.Consolidate(1, tfdiags.Warning)
+		diags = diags.Consolidate(1, tfdiags.Warning, func(diag tfdiags.Diagnostic) string {
+			// Check to see if we have a DeprecationCause
+			depExtra := v.DeprecationKeyExtra(diag)
+			if depExtra != "" {
+				return depExtra
+			}
+			return tfdiags.DefaultDiagnosticsConsolidation(diag)
+		}, tfdiags.ConsolidationOptDefault)
 	}
 	if v.consolidateErrors {
-		diags = diags.Consolidate(1, tfdiags.Error)
+		diags = diags.Consolidate(1, tfdiags.Error, tfdiags.DefaultDiagnosticsConsolidation, tfdiags.ConsolidationOptDefault)
 	}
 
 	// Since warning messages are generally competing
@@ -172,7 +213,10 @@ func (v *View) Diagnostics(diags tfdiags.Diagnostics) {
 		}
 	}
 
-	for _, diag := range diags {
+	// This slice is built with lint diagnostics in front of everything, to keep the order applied at the begining
+	// of this method. This is to follow the reasoning described on diags.Sort().
+	allDiags := append(lintDiags, diags...)
+	for _, diag := range allDiags {
 		var msg string
 		if v.colorize.Disable {
 			msg = format.DiagnosticPlain(diag, v.configSources(), v.streams.Stderr.Columns())
@@ -231,10 +275,6 @@ func (v *View) errorColumns() int {
 // visually de-emphasize it.
 func (v *View) outputHorizRule() {
 	v.streams.Println(format.HorizontalRule(v.colorize, v.outputColumns()))
-}
-
-func (v *View) SetShowSensitive(showSensitive bool) {
-	v.showSensitive = showSensitive
 }
 
 // Colorize returns the [colorstring.Colorize] object within to be used in other places.

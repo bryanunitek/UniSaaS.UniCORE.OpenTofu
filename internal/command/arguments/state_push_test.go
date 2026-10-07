@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseStatePush_basicValidation(t *testing.T) {
@@ -22,12 +23,14 @@ func TestParseStatePush_basicValidation(t *testing.T) {
 		"no arguments": {
 			args:        nil,
 			want:        statePushArgsWithDefaults(nil),
-			wantErrText: "Exactly one argument expected",
+			wantErrText: "Expected exactly one positional argument",
 		},
 		"too many arguments": {
-			args:        []string{"state1.tfstate", "state2.tfstate"},
-			want:        statePushArgsWithDefaults(nil),
-			wantErrText: "Exactly one argument expected",
+			args: []string{"state1.tfstate", "state2.tfstate"},
+			want: statePushArgsWithDefaults(func(v *StatePush) {
+				v.StateSrc = "state1.tfstate"
+			}),
+			wantErrText: "Expected exactly one positional argument",
 		},
 		"valid state file path": {
 			args: []string{"terraform.tfstate"},
@@ -51,14 +54,14 @@ func TestParseStatePush_basicValidation(t *testing.T) {
 		"lock flag": {
 			args: []string{"-lock=false", "terraform.tfstate"},
 			want: statePushArgsWithDefaults(func(v *StatePush) {
-				v.Backend.StateLock = false
+				v.State.Lock = false
 				v.StateSrc = "terraform.tfstate"
 			}),
 		},
 		"lock-timeout flag": {
 			args: []string{"-lock-timeout=30s", "terraform.tfstate"},
 			want: statePushArgsWithDefaults(func(v *StatePush) {
-				v.Backend.StateLockTimeout = 30000000000 // 30s in nanoseconds
+				v.State.LockTimeout = 30000000000 // 30s in nanoseconds
 				v.StateSrc = "terraform.tfstate"
 			}),
 		},
@@ -73,21 +76,17 @@ func TestParseStatePush_basicValidation(t *testing.T) {
 			args: []string{"-force", "-lock=false", "-ignore-remote-version", "terraform.tfstate"},
 			want: statePushArgsWithDefaults(func(v *StatePush) {
 				v.Force = true
-				v.Backend.StateLock = false
+				v.State.Lock = false
 				v.Backend.IgnoreRemoteVersion = true
 				v.StateSrc = "terraform.tfstate"
 			}),
 		},
 		"unknown flag": {
-			args: []string{"-unknown-flag", "terraform.tfstate"},
-			want: statePushArgsWithDefaults(func(v *StatePush) {
-				v.StateSrc = "terraform.tfstate"
-			}),
-			wantErrText: "Failed to parse command-line flags: flag provided but not defined: -unknown-flag",
+			args:        []string{"-unknown-flag", "terraform.tfstate"},
+			want:        statePushArgsWithDefaults(nil),
+			wantErrText: "flag provided but not defined: -unknown-flag",
 		},
 	}
-
-	cmpOpts := cmpopts.IgnoreUnexported(Vars{}, ViewOptions{}, Backend{})
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -104,7 +103,7 @@ func TestParseStatePush_basicValidation(t *testing.T) {
 					t.Errorf("the returned diagnostics does not contain the expected error message.\ndiags:\n%s\nwanted: %s\n", errStr, tc.wantErrText)
 				}
 			}
-			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("unexpected result\n%s", diff)
 			}
 		})
@@ -161,18 +160,22 @@ func statePushArgsWithDefaults(mutate func(v *StatePush)) *StatePush {
 	ret := &StatePush{
 		StateSrc: "",
 		Force:    false,
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: false,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
 		Vars: &Vars{},
-		Backend: Backend{
-			StateLock:           true,
-			StateLockTimeout:    0,
+		Backend: &Backend{
 			IgnoreRemoteVersion: false,
 			Reconfigure:         false,
 			MigrateState:        false,
 			ForceInitCopy:       false,
+		},
+		State: &State{
+			Lock: true,
 		},
 	}
 	if mutate != nil {

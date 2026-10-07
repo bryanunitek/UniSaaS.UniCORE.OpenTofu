@@ -92,6 +92,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// RunCommander handles simulating the arg handling that is typically available
+// through the cli package
+func RunCommander(t *testing.T, cmd Command, meta Meta, args []string) int {
+	diags := cmd.CommandLine.ParseDirect(t.Context(), args)
+	return RunCli("testing", cmd, meta, diags)
+
+}
+
 // tempWorkingDir constructs a workdir.Dir object referring to a newly-created
 // temporary directory. The temporary directory is automatically removed when
 // the test and all its subtests complete.
@@ -155,7 +163,7 @@ func testModuleWithSnapshot(t *testing.T, name string) (*configs.Config, *config
 	t.Helper()
 
 	dir := filepath.Join(fixtureDir, name)
-	loader := configload.NewLoaderForTests(t)
+	loader := configload.NewLoaderForTests(t, false)
 
 	// Test modules usually do not refer to remote sources, and for local
 	// sources only this ultimately just records all of the module paths
@@ -302,7 +310,7 @@ func testState() *states.State {
 				// The weird whitespace here is reflective of how this would
 				// get written out in a real state file, due to the indentation
 				// of all of the containing wrapping objects and arrays.
-				AttrsJSON:    []byte(`{"id":"bar"}`),
+				AttrsJSON:    []byte("{\n            \"id\": \"bar\"\n          }"),
 				Status:       states.ObjectReady,
 				Dependencies: []addrs.ConfigResource{},
 			},
@@ -327,7 +335,7 @@ func writeStateForTesting(state *states.State, w io.Writer) error {
 		Lineage: "fake-for-testing",
 		State:   state,
 	}
-	return statefile.Write(sf, w, encryption.StateEncryptionDisabled())
+	return statefile.WriteIndent(sf, w, encryption.StateEncryptionDisabled())
 }
 
 // testStateMgrCurrentLineage returns the current lineage for the given state
@@ -504,7 +512,7 @@ func testDataStateRead(t *testing.T, path string) *clistate.CLIState {
 	}
 	defer f.Close()
 
-	s, err := clistate.ReadState(f)
+	s, err := clistate.ReadState(f, false)
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
@@ -708,7 +716,7 @@ func testBackendState(t *testing.T, s *states.State, c int) (*clistate.CLIState,
 	backendConfig := &configs.Backend{
 		Type:   "http",
 		Config: configs.SynthBody("<testBackendState>", map[string]cty.Value{}),
-		Eval:   configs.NewStaticEvaluator(nil, configs.RootModuleCallForTesting()),
+		Eval:   configs.NewStaticEvaluator(nil, nil, configs.RootModuleCallForTesting()),
 	}
 	httpBackendInit, _ := backendInit.Backend("http")
 	b := httpBackendInit(encryption.StateEncryptionDisabled())
@@ -934,14 +942,6 @@ func normalizeJSON(t *testing.T, src []byte) string {
 		t.Fatalf("error normalizing JSON: %s", err)
 	}
 	return buf.String()
-}
-
-func mustResourceAddr(s string) addrs.ConfigResource {
-	addr, diags := addrs.ParseAbsResourceStr(s)
-	if diags.HasErrors() {
-		panic(diags.Err())
-	}
-	return addr.Config()
 }
 
 // This map from provider type name to namespace is used by the fake registry
@@ -1243,14 +1243,12 @@ func TestVarsParsing(t *testing.T) {
 		t.Cleanup(testStdinPipe(t, strings.NewReader("var.foo\nvar.snack\n")))
 		streams, done := terminal.StreamsForTesting(t)
 		c := &ConsoleCommand{
-			Meta: Meta{
-				WorkingDir:       workdir.NewDir("."),
-				testingOverrides: metaOverridesForProvider(p),
-				View:             views.NewView(streams),
-			},
+			WorkingDir:       workdir.NewDir("."),
+			testingOverrides: metaOverridesForProvider(p),
+			View:             views.NewView(streams),
 		}
 
-		args := append([]string{"-no-color"}, varArgs...)
+		args := append([]string{"-no-color", "-lock=false"}, varArgs...)
 		code := c.Run(args)
 		output := done(t)
 		if code != 0 {

@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseProvidersLock_basicValidation(t *testing.T) {
@@ -63,29 +64,47 @@ func TestParseProvidersLock_basicValidation(t *testing.T) {
 				v.NetMirrorURL = "https://example.com/mirror"
 			}),
 		},
-		"both mirrors error": {
-			args: []string{"-fs-mirror=/path", "-net-mirror=https://example.com"},
+		"oci-mirror flag": {
+			args: []string{"-oci-mirror=https://example.com/mirror"},
 			want: providersLockArgsWithDefaults(func(v *ProvidersLock) {
+				v.Providers = []string{}
+				v.OciMirrorTemplate = "https://example.com/mirror"
+			}),
+		},
+		"invalid oci-mirror flag": {
+			args: []string{"-oci-mirror=invalid{template"},
+			want: providersLockArgsWithDefaults(func(v *ProvidersLock) {
+				v.Providers = []string{}
+				v.OciMirrorTemplate = "invalid{template"
+			}),
+			wantErrText: "The -oci-mirror argument is not a valid URI template",
+		},
+		"all mirrors error": {
+			args: []string{"-fs-mirror=/path", "-net-mirror=https://example.com", "-oci-mirror=https://example.com/mirror"},
+			want: providersLockArgsWithDefaults(func(v *ProvidersLock) {
+				v.Providers = []string{}
 				v.FsMirrorDir = "/path"
 				v.NetMirrorURL = "https://example.com"
+				v.OciMirrorTemplate = "https://example.com/mirror"
 			}),
-			wantErrText: "The -fs-mirror and -net-mirror command line options are mutually-exclusive.",
+			wantErrText: "The mirror command line options are mutually-exclusive.",
 		},
 		"mixed flags and providers": {
 			args: []string{"-platform=linux_amd64", "-platform=darwin_arm64", "test_ns/test_provider", "test_ns2/test_provider2"},
 			want: providersLockArgsWithDefaults(func(v *ProvidersLock) {
+				v.Providers = []string{}
 				v.OptPlatforms = []string{"linux_amd64", "darwin_arm64"}
 				v.Providers = []string{"test_ns/test_provider", "test_ns2/test_provider2"}
 			}),
 		},
 		"unknown flag": {
-			args:        []string{"-unknown-flag"},
-			want:        providersLockArgsWithDefaults(func(v *ProvidersLock) {}),
-			wantErrText: "Failed to parse command-line flags: flag provided but not defined: -unknown-flag",
+			args: []string{"-unknown-flag"},
+			want: providersLockArgsWithDefaults(func(v *ProvidersLock) {
+				v.Providers = nil
+			}),
+			wantErrText: "flag provided but not defined: -unknown-flag",
 		},
 	}
-
-	cmpOpts := cmpopts.IgnoreUnexported(Vars{}, ViewOptions{})
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -102,7 +121,7 @@ func TestParseProvidersLock_basicValidation(t *testing.T) {
 					t.Errorf("the returned diagnostics does not contain the expected error message.\ndiags:\n%s\nwanted: %s\n", errStr, tc.wantErrText)
 				}
 			}
-			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("unexpected result\n%s", diff)
 			}
 		})
@@ -162,13 +181,16 @@ func TestParseProvidersLock_vars(t *testing.T) {
 
 func providersLockArgsWithDefaults(mutate func(v *ProvidersLock)) *ProvidersLock {
 	ret := &ProvidersLock{
-		Providers:    nil,
-		OptPlatforms: nil,
+		Providers:    []string{},
+		OptPlatforms: []string{},
 		FsMirrorDir:  "",
 		NetMirrorURL: "",
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: false,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        false,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
 		Vars: &Vars{},
 	}

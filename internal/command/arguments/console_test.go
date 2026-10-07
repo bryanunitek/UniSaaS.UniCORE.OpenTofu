@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseConsole_basicValidation(t *testing.T) {
@@ -28,7 +30,7 @@ func TestParseConsole_basicValidation(t *testing.T) {
 		"custom state path": {
 			args: []string{"-state=/path/to/state.tfstate"},
 			want: consoleArgsWithDefaults(func(console *Console) {
-				console.StatePath = "/path/to/state.tfstate"
+				console.State.StatePath = "/path/to/state.tfstate"
 			}),
 		},
 		"json-into with input enabled": {
@@ -40,45 +42,44 @@ func TestParseConsole_basicValidation(t *testing.T) {
 		"single var": {
 			args: []string{"-var=key=value"},
 			want: consoleArgsWithDefaults(func(console *Console) {
-				// Vars would be updated, but we ignore it in cmp
+				console.Vars = &Vars{{Name: "-var", Value: "key=value"}}
 			}),
 		},
 		"multiple vars": {
 			args: []string{"-var=key1=value1", "-var=key2=value2"},
 			want: consoleArgsWithDefaults(func(console *Console) {
-				// Vars would be updated, but we ignore it in cmp
+				console.Vars = &Vars{{Name: "-var", Value: "key1=value1"}, {Name: "-var", Value: "key2=value2"}}
 			}),
 		},
 		"var-file": {
 			args: []string{"-var-file=test.tfvars"},
 			want: consoleArgsWithDefaults(func(console *Console) {
-				// Vars would be updated, but we ignore it in cmp
+				console.Vars = &Vars{{Name: "-var-file", Value: "test.tfvars"}}
 			}),
 		},
 		"mixed vars and var-files": {
 			args: []string{"-var=key=value", "-var-file=test.tfvars", "-var=another=val"},
 			want: consoleArgsWithDefaults(func(console *Console) {
-				// Vars would be updated, but we ignore it in cmp
+				console.Vars = &Vars{{Name: "-var", Value: "key=value"}, {Name: "-var-file", Value: "test.tfvars"}, {Name: "-var", Value: "another=val"}}
 			}),
 		},
 		"only lock-timeout": {
 			args: []string{"-lock-timeout=10s"},
 			want: consoleArgsWithDefaults(func(console *Console) {
 				// do not set `console.Backend.StateLock = true` since it's meant to be true already
-				console.Backend.StateLockTimeout = 10 * time.Second
+				console.State.LockTimeout = 10 * time.Second
 			}),
 		},
 		"disable locking": {
 			args: []string{"-lock=false"},
 			want: consoleArgsWithDefaults(func(console *Console) {
-				console.Backend.StateLock = false
+				console.State.Lock = false
 			}),
 		},
 	}
 
 	cmpOpts := cmp.Options{
-		cmpopts.IgnoreUnexported(Vars{}, ViewOptions{}),
-		cmpopts.IgnoreFields(ViewOptions{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
+		cmpopts.IgnoreFields(View{}, "JSONInto"), // We ignore JSONInto because it contains a file which is not really diffable
 	}
 
 	for name, tc := range testCases {
@@ -98,14 +99,18 @@ func TestParseConsole_basicValidation(t *testing.T) {
 
 func consoleArgsWithDefaults(mutate func(console *Console)) *Console {
 	ret := &Console{
-		StatePath: DefaultStateFilename,
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: true,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        true,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
 		Vars: &Vars{},
-		Backend: Backend{
-			StateLock: true,
+		State: &State{
+			Lock: true,
+			// Because the state flag is registered with a different default value
+			StatePath: DefaultStateFilename,
 		},
 	}
 	if mutate != nil {

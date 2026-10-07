@@ -27,7 +27,7 @@ type Plan interface {
 }
 
 // NewPlan returns an initialized Plan implementation for the given ViewType.
-func NewPlan(args arguments.ViewOptions, view *View) Plan {
+func NewPlan(args *arguments.View, view *View) Plan {
 	var plan Plan
 	switch args.ViewType {
 	case arguments.ViewJSON:
@@ -101,7 +101,7 @@ type PlanHuman struct {
 var _ Plan = (*PlanHuman)(nil)
 
 func (v *PlanHuman) Operation() Operation {
-	return NewOperation(arguments.ViewHuman, v.inAutomation, v.view)
+	return NewOperation(arguments.ViewHuman, v.view)
 }
 
 func (v *PlanHuman) Hooks() []tofu.Hook {

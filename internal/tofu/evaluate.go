@@ -21,6 +21,7 @@ import (
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/configs"
 	"github.com/opentofu/opentofu/internal/configs/configschema"
+	"github.com/opentofu/opentofu/internal/configs/symlib"
 	"github.com/opentofu/opentofu/internal/didyoumean"
 	"github.com/opentofu/opentofu/internal/instances"
 	"github.com/opentofu/opentofu/internal/lang"
@@ -78,7 +79,7 @@ type Evaluator struct {
 // If the "self" argument is nil then the "self" object is not available
 // in evaluated expressions. Otherwise, it behaves as an alias for the given
 // address.
-func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable, source addrs.Referenceable, functions lang.ProviderFunction) *lang.Scope {
+func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable, source addrs.Referenceable, functions lang.ProviderFunction, table symlib.Table) *lang.Scope {
 	return &lang.Scope{
 		Data:              data,
 		ParseRef:          addrs.ParseRef,
@@ -88,6 +89,7 @@ func (e *Evaluator) Scope(data lang.Data, self addrs.Referenceable, source addrs
 		BaseDir:           ".", // Always current working directory for now.
 		PlanTimestamp:     e.PlanTimestamp,
 		ProviderFunctions: functions,
+		SymbolTable:       table,
 	}
 }
 
@@ -410,7 +412,7 @@ func (d *evaluationStateData) GetModule(_ context.Context, addr addrs.ModuleCall
 			}
 		}
 		if output.Deprecated != "" {
-			val = marks.DeprecatedOutput(val, output.Addr, output.Deprecated, parentCfg.IsModuleCallFromRemoteModule(addr.Name))
+			val = marks.DeprecatedOutput(val, output.Addr, output.Deprecated)
 		}
 
 		_, callInstance := output.Addr.Module.CallInstance()
@@ -501,7 +503,7 @@ func (d *evaluationStateData) GetModule(_ context.Context, addr addrs.ModuleCall
 			}
 
 			if cfg.Deprecated != "" {
-				instance[cfg.Name] = marks.DeprecatedOutput(change.After, change.Addr, cfg.Deprecated, parentCfg.IsModuleCallFromRemoteModule(addr.Name))
+				instance[cfg.Name] = marks.DeprecatedOutput(change.After, change.Addr, cfg.Deprecated)
 			}
 		}
 	}
@@ -784,7 +786,7 @@ func (d *evaluationStateData) GetResource(ctx context.Context, addr addrs.Resour
 			// for all resources in the configuration.
 			if schema.ContainsMarks() && config.Enabled == nil {
 				val := schema.UnknownValue()
-				schemaMarks := schema.ValueMarks(val, nil, addr, moduleConfig.IsRemoteModule())
+				schemaMarks := schema.ValueMarks(val, nil, new(addr.Instance(addrs.NoKey).Absolute(d.ModulePath)))
 				val = val.MarkWithPaths(schemaMarks)
 				return val, diags
 			}
@@ -816,7 +818,7 @@ func (d *evaluationStateData) GetResource(ctx context.Context, addr addrs.Resour
 		instAddr := addr.Instance(key).Absolute(d.ModulePath)
 
 		if instAddr.Resource.Resource.Mode == addrs.EphemeralResourceMode {
-			v, ephDiags := d.getEphemeralResourceInstanceValue(schema, instAddr, instance, config, moduleConfig)
+			v, ephDiags := d.getEphemeralResourceInstanceValue(schema, instAddr, instance, config)
 			diags = diags.Append(ephDiags)
 			instances[key] = v
 			continue
@@ -869,7 +871,7 @@ func (d *evaluationStateData) GetResource(ctx context.Context, addr addrs.Resour
 				}
 				// Now that we know that the schema contains sensitive and/or ephemeral marks,
 				// Combine those marks together to ensure that the value is marked correctly but not double marked
-				schemaMarks := schema.ValueMarks(val, nil, addr, moduleConfig.IsRemoteModule())
+				schemaMarks := schema.ValueMarks(val, nil, &instAddr)
 				afterMarks = combinePathValueMarks(afterMarks, schemaMarks)
 			}
 
@@ -892,7 +894,7 @@ func (d *evaluationStateData) GetResource(ctx context.Context, addr addrs.Resour
 		}
 
 		val := instanceObjectSrc.Value
-		instances[key] = markedValueBySchema(addr, moduleConfig, schema, val)
+		instances[key] = markedValueBySchema(instAddr, schema, val)
 	}
 
 	// ret should be populated with a valid value in all cases below
@@ -978,7 +980,7 @@ func (d *evaluationStateData) GetResource(ctx context.Context, addr addrs.Resour
 	return ret, diags
 }
 
-func markedValueBySchema(addr addrs.Resource, moduleConfig *configs.Config, schema *configschema.Block, val cty.Value) cty.Value {
+func markedValueBySchema(addr addrs.AbsResourceInstance, schema *configschema.Block, val cty.Value) cty.Value {
 	if !schema.ContainsMarks() {
 		return val
 	}
@@ -986,7 +988,7 @@ func markedValueBySchema(addr addrs.Resource, moduleConfig *configs.Config, sche
 	// Now that we know that the schema contains sensitive and/or ephemeral marks,
 	// Combine those marks together to ensure that the value is marked correctly but not double marked
 	val, valMarks = val.UnmarkDeepWithPaths()
-	schemaMarks := schema.ValueMarks(val, nil, addr, moduleConfig.IsRemoteModule())
+	schemaMarks := schema.ValueMarks(val, nil, &addr)
 	if schema.Ephemeral {
 		// Since we are preparing to mark the whole value as ephemeral, we want to remove any other
 		// possible downstream ephemeral marks to avoid having the same mark on multiple layers.
@@ -1037,7 +1039,7 @@ func (d *evaluationStateData) GetTerraformAttr(_ context.Context, addr addrs.Ter
 		diags = diags.Append(&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("Invalid %q attribute", addr.Alias),
-			Detail:   fmt.Sprintf(`The %q object does not have an attribute named %q. The only supported attribute is %s.workspace, the name of the currently-selected workspace.`, addr.Alias, addr.Name, addr.Alias),
+			Detail:   fmt.Sprintf(`The %q object does not have an attribute named %q. The only supported attributes are %s.workspace and %s.applying`, addr.Alias, addr.Name, addr.Alias, addr.Alias),
 			Subject:  rng.ToHCL().Ptr(),
 		})
 		return cty.DynamicVal, diags
@@ -1100,12 +1102,7 @@ func (d *evaluationStateData) GetOutput(_ context.Context, addr addrs.OutputValu
 		// 	val = val.Mark(marks.Ephemeral)
 		// }
 		if config.Deprecated != "" {
-			isRemote := false
-			if p := moduleConfig.Path; p != nil && !p.IsRoot() {
-				_, call := p.Call()
-				isRemote = moduleConfig.IsModuleCallFromRemoteModule(call.Name)
-			}
-			val = marks.DeprecatedOutput(val, output.Addr, config.Deprecated, isRemote)
+			val = marks.DeprecatedOutput(val, output.Addr, config.Deprecated)
 		}
 
 		return val, diags
@@ -1133,7 +1130,7 @@ func (d *evaluationStateData) GetCheckBlock(_ context.Context, addr addrs.Check,
 // The state object carries also a deferral information so if it was deferred, it cannot return the value
 // since such a value contains only the values from the configuration so we want to return unknown values
 // for all the other attributes.
-func (d *evaluationStateData) getEphemeralResourceInstanceValue(schema *configschema.Block, addr addrs.AbsResourceInstance, ris *states.ResourceInstance, config *configs.Resource, moduleConfig *configs.Config) (cty.Value, tfdiags.Diagnostics) {
+func (d *evaluationStateData) getEphemeralResourceInstanceValue(schema *configschema.Block, addr addrs.AbsResourceInstance, ris *states.ResourceInstance, config *configs.Resource) (cty.Value, tfdiags.Diagnostics) {
 	ty := schema.ImpliedType()
 	// During validate, ephemeral values are not opened
 	if d.Operation == walkValidate {
@@ -1160,7 +1157,7 @@ func (d *evaluationStateData) getEphemeralResourceInstanceValue(schema *configsc
 		return objchange.PlannedUnknownObject(schema, v.Value).Mark(marks.Ephemeral), nil
 	}
 
-	return markedValueBySchema(addr.Resource.Resource, moduleConfig, schema, v.Value), nil
+	return markedValueBySchema(addr, schema, v.Value), nil
 }
 
 // moduleDisplayAddr returns a string describing the given module instance

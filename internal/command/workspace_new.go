@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 	"github.com/posener/complete"
 
@@ -23,43 +22,37 @@ import (
 	"github.com/opentofu/opentofu/internal/states/statefile"
 )
 
+func WorkspaceNewCommander(legacyName bool) Command {
+	cmd := Command{
+		Name:  "new",
+		Short: "Create a new workspace",
+		Long:  `Create a new OpenTofu workspace.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindWorkspaceNew(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return WorkspaceNewCommand{meta, legacyName}.Execute(args, views.NewWorkspace(args.View, meta.View))
+	}
+
+	return cmd
+}
+
 type WorkspaceNewCommand struct {
 	Meta
 	LegacyName bool
 }
 
 func (c *WorkspaceNewCommand) Run(rawArgs []string) int {
+	return RunCommand(WorkspaceNewCommander(c.LegacyName), c.Meta, rawArgs)
+}
+func (c WorkspaceNewCommand) Execute(args *arguments.WorkspaceNew, view views.Workspace) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
 
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseWorkspaceNew(rawArgs)
-	defer closer()
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewWorkspace(args.ViewOptions, c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		if args.ViewOptions.ViewType == arguments.ViewJSON {
-			return 1 // in case it's json, do not print the help of the command
-		}
-		return cli.RunResultHelp
-	}
-	c.Meta.variableArgs = args.Vars.All()
-
 	view.WarnWhenUsedAsEnvCmd(c.LegacyName)
-
-	// TODO meta-refactor: remove these when meta state locking related fields are removed and pass the
-	//  arguments to the backend component instead
-	c.stateLock = args.StateLock
-	c.stateLockTimeout = args.StateLockTimeout
-	c.statePath = args.StatePath
 
 	configPath := c.WorkingDir.NormalizePath(c.WorkingDir.RootModuleDir())
 
@@ -143,7 +136,7 @@ func (c *WorkspaceNewCommand) Run(rawArgs []string) int {
 
 	view.WorkspaceCreated(workspace)
 
-	statePath := args.StatePath
+	statePath := args.State.StatePath
 	if statePath == "" {
 		// if we're not loading a state, then we're done
 		return 0
@@ -160,8 +153,8 @@ func (c *WorkspaceNewCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	if args.StateLock {
-		stateLocker := clistate.NewLocker(args.StateLockTimeout, backendView.StateLocker())
+	if args.State.Lock {
+		stateLocker := clistate.NewLocker(args.State.LockTimeout, backendView.StateLocker())
 		if diags := stateLocker.Lock(stateMgr, "workspace-new"); diags.HasErrors() {
 			view.Diagnostics(diags)
 			return 1

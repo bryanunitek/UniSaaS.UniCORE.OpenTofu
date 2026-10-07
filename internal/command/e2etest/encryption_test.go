@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -26,12 +25,11 @@ type tofuResult struct {
 }
 
 func (r tofuResult) Success() tofuResult {
+	r.t.Helper()
 	if r.stderr != "" {
-		debug.PrintStack()
 		r.t.Fatalf("unexpected stderr output:\n%s", r.stderr)
 	}
 	if r.err != nil {
-		debug.PrintStack()
 		r.t.Fatalf("unexpected error: %s", r.err)
 	}
 
@@ -39,8 +37,8 @@ func (r tofuResult) Success() tofuResult {
 }
 
 func (r tofuResult) Failure() tofuResult {
+	r.t.Helper()
 	if r.err == nil {
-		debug.PrintStack()
 		r.t.Fatal("expected error")
 	}
 	return r
@@ -58,17 +56,26 @@ func SanitizeStderr(msg string) string {
 }
 
 func (r tofuResult) StderrContains(msg string) tofuResult {
+	r.t.Helper()
 	stdErrSanitized := SanitizeStderr(r.stderr)
 	if !strings.Contains(stdErrSanitized, msg) {
-		debug.PrintStack()
 		r.t.Fatalf("expected stderr output %q:\n%s", msg, stdErrSanitized)
 	}
 	return r
 }
 
+func (r tofuResult) StdoutContains(msg string) tofuResult {
+	r.t.Helper()
+	stdoutSanitized := SanitizeStderr(r.stdout)
+	if !strings.Contains(stdoutSanitized, msg) {
+		r.t.Fatalf("expected stdout output %q:\n%s", msg, stdoutSanitized)
+	}
+	return r
+}
+
 func (r tofuResult) Contains(msg string) tofuResult {
+	r.t.Helper()
 	if !strings.Contains(r.stdout, msg) {
-		debug.PrintStack()
 		r.t.Fatalf("expected output %q:\n%s", msg, r.stdout)
 	}
 	return r
@@ -264,4 +271,28 @@ func TestEncryptionFlow(t *testing.T) {
 		applyPlan(encryptedPlan, withVarArg("passphrase", correctPassphrase)).Failure().StderrContains("the given plan file is encrypted and requires a valid encryption")
 		requireUnencryptedState()
 	}
+}
+
+func TestEncryptionEnvironmentVariable(t *testing.T) {
+	// This test reaches out to registry.opentofu.org to download the
+	// mock provider, so it can only run if network access is allowed
+	skipIfCannotAccessNetwork(t)
+
+	// There is a lot of setup / helpers defined.  Actual test logic is below.
+
+	fixturePath := filepath.Join("testdata", "encryption-flow")
+	tf := e2e.NewBinary(t, tofuBin, fixturePath)
+
+	// This test reproduces the situation reported in https://github.com/opentofu/opentofu/issues/4262
+	t.Run("with TF_ENCRYPTION containing only a simple space", func(t *testing.T) {
+		// Setting this env var at the test level will force `tf.Run` to pick this up
+		t.Setenv("TF_ENCRYPTION", " ")
+		_, stderr, err := tf.Run("init")
+		if err != nil {
+			t.Errorf("unexpected error: %s", err)
+		}
+		if stderr != "" {
+			t.Errorf("unexpected stderr output:\n%s", stderr)
+		}
+	})
 }

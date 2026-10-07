@@ -9,8 +9,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/configs/configload"
 
 	"github.com/opentofu/opentofu/internal/addrs"
 	"github.com/opentofu/opentofu/internal/backend"
@@ -21,40 +21,37 @@ import (
 	"github.com/opentofu/opentofu/internal/tofumigrate"
 )
 
+func StateShowCommander() Command {
+	cmd := Command{
+		Name:  "show",
+		Short: "Show a resource in the state",
+		Long: `Shows the attributes of a resource in the OpenTofu state.
+
+This command shows the attributes of a single resource in the OpenTofu state. The address argument must be used to specify a single resource. You can view the list of available resources with "tofu state list".`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindStateShow(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return StateShowCommand{StateMeta{meta}}.Execute(args, views.NewState(args.View, meta.View))
+	}
+
+	return cmd
+}
+
 // StateShowCommand is a Command implementation that shows a single resource.
 type StateShowCommand struct {
-	Meta
 	StateMeta
 }
 
 func (c *StateShowCommand) Run(rawArgs []string) int {
+	return RunCommand(StateShowCommander(), c.Meta, rawArgs)
+}
+func (c StateShowCommand) Execute(args *arguments.StateShow, view views.State) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
-
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseStateShow(rawArgs)
-	defer closer()
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewState(args.ViewOptions, c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		if args.ViewOptions.ViewType == arguments.ViewJSON {
-			return 1 // in case it's json, do not print the help of the command
-		}
-		return cli.RunResultHelp
-	}
-	c.View.SetShowSensitive(args.ShowSensitive)
-	// TODO meta-refactor: remove these assignments once we have a clear way to propagate these to the logic
-	//  that uses them
-	c.Meta.variableArgs = args.Vars.All()
-	c.statePath = args.StatePath
 
 	// Check for user-supplied plugin path
 	var err error
@@ -112,7 +109,7 @@ func (c *StateShowCommand) Run(rawArgs []string) int {
 		return 1
 	}
 
-	opReq.ConfigLoader, err = c.initConfigLoader()
+	opReq.ConfigLoader, err = configload.Initialise(c.configLoader())
 	if err != nil {
 		view.Diagnostics(diags.Append(tfdiags.Sourceless(
 			tfdiags.Error,
@@ -123,7 +120,9 @@ func (c *StateShowCommand) Run(rawArgs []string) int {
 	}
 
 	// Get the context (required to get the schemas)
-	lr, _, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, _, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	if ctxDiags.HasErrors() {
 		view.Diagnostics(ctxDiags)
 		return 1

@@ -1060,18 +1060,18 @@ func (c *Config) transformOverriddenResourcesForTest(run *TestRun, file *TestFil
 
 	// We want to pass override values to resources being overridden.
 	for _, overrideRes := range resources {
-		targetConfig := c.Root.Descendent(overrideRes.TargetParsed.Module)
+		targetConfig := c.Root.Descendent(overrideRes.TargetParsed.Module.Module())
 		if targetConfig == nil {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("Module not found: %v", overrideRes.TargetParsed.Module),
+				Summary:  fmt.Sprintf("Module not found: %v", overrideRes.TargetParsed.Module.Module()),
 				Detail:   "Target points to resource in undefined module. Please, ensure module exists.",
 				Subject:  overrideRes.Target.SourceRange().Ptr(),
 			})
 			continue
 		}
 
-		res := targetConfig.Module.ResourceByAddr(overrideRes.TargetParsed.Resource)
+		res := targetConfig.Module.ResourceByAddr(overrideRes.TargetParsed.Resource.Resource)
 		if res == nil {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
@@ -1099,24 +1099,27 @@ func (c *Config) transformOverriddenResourcesForTest(run *TestRun, file *TestFil
 		}
 
 		res.IsOverridden = true
-		res.OverrideValues = overrideRes.Values
+		if res.Overrides == nil {
+			res.Overrides = addrs.NewOverrideTrie[map[string]cty.Value]()
+		}
+		res.Overrides.Set(overrideRes.TargetParsed, overrideRes.Values, overrideRes.Target.SourceRange().Ptr())
 	}
 
 	return func() {
 		// Reset all the overridden resources.
 		for _, o := range run.OverrideResources {
-			m := c.Root.Descendent(o.TargetParsed.Module)
+			m := c.Root.Descendent(o.TargetParsed.Module.Module())
 			if m == nil {
 				continue
 			}
 
-			res := m.Module.ResourceByAddr(o.TargetParsed.Resource)
+			res := m.Module.ResourceByAddr(o.TargetParsed.Resource.Resource)
 			if res == nil {
 				continue
 			}
 
 			res.IsOverridden = false
-			res.OverrideValues = nil
+			res.Overrides = addrs.NewOverrideTrie[map[string]cty.Value]()
 		}
 	}, diags
 }
@@ -1238,26 +1241,4 @@ func mergeOverriddenModules(runModules, fileModules []*OverrideModule) ([]*Overr
 	}
 
 	return modules, diags
-}
-
-// IsModuleCallFromRemoteModule is traversing upwards from the module call to the root module and is looking for any
-// module on the path for which configs.Module.EntersNewPackage=true.
-// This is needed to know if a variable is referenced from a module imported from a remote source or from a local one.
-func (c *Config) IsModuleCallFromRemoteModule(callName string) bool {
-	callCfg, ok := c.Children[callName]
-	if !ok {
-		log.Printf("[ERROR] no module call found in %q for %q", c.Path, callName)
-		return false
-	}
-
-	return callCfg.IsRemoteModule()
-}
-
-func (c *Config) IsRemoteModule() bool {
-	for current := c; current.Parent != nil; current = current.Parent {
-		if current.EntersNewPackage() {
-			return true
-		}
-	}
-	return false
 }

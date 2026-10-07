@@ -116,7 +116,7 @@ func (m *Meta) providerCustomLocalDirectorySource(ctx context.Context, dirs []st
 // Only one object returned from this method should be live at any time,
 // because objects inside contain caches that must be maintained properly.
 func (m *Meta) providerGlobalCacheDir() *providercache.Dir {
-	dir := m.PluginCacheDir
+	dir := m.SystemCfg.PluginCacheDir
 	if dir == "" {
 		return nil // cache disabled
 	}
@@ -162,7 +162,7 @@ func (m *Meta) providerDevOverrideInitWarnings() tfdiags.Diagnostics {
 	var detailMsg strings.Builder
 	detailMsg.WriteString("The following provider development overrides are set in the CLI configuration:\n")
 	for addr, path := range m.ProviderDevOverrides {
-		detailMsg.WriteString(fmt.Sprintf(" - %s in %s\n", addr.ForDisplay(), path))
+		fmt.Fprintf(&detailMsg, " - %s in %s\n", addr.ForDisplay(), path)
 	}
 	detailMsg.WriteString("\nSkip tofu init when using provider development overrides. It is not necessary and may error unexpectedly.")
 	return tfdiags.Diagnostics{
@@ -194,7 +194,7 @@ func (m *Meta) providerDevOverrideRuntimeWarnings() tfdiags.Diagnostics {
 	var detailMsg strings.Builder
 	detailMsg.WriteString("The following provider development overrides are set in the CLI configuration:\n")
 	for addr, path := range m.ProviderDevOverrides {
-		detailMsg.WriteString(fmt.Sprintf(" - %s in %s\n", addr.ForDisplay(), path))
+		fmt.Fprintf(&detailMsg, " - %s in %s\n", addr.ForDisplay(), path)
 	}
 	detailMsg.WriteString("\nThe behavior may therefore not match any released version of the provider and applying changes may cause the state to become incompatible with published releases.")
 	return tfdiags.Diagnostics{

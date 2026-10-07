@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/opentofu/opentofu/internal/collections"
 	"github.com/opentofu/opentofu/internal/command/flags"
+	"github.com/opentofu/opentofu/internal/linting"
 )
 
 func TestParseInit_basicValidation(t *testing.T) {
@@ -82,19 +83,29 @@ func TestParseInit_basicValidation(t *testing.T) {
 		"one plugin dir configured": {
 			[]string{"-plugin-dir=/test1"},
 			initArgsWithDefaults(func(init *Init) {
-				_ = init.FlagPluginPath.Set("/test1")
+				init.FlagPluginPath = append(init.FlagPluginPath, "/test1")
 			}),
 		},
 		"multiple plugin dirs configured": {
 			[]string{"-plugin-dir=/test1", "-plugin-dir=/test2"},
 			initArgsWithDefaults(func(init *Init) {
-				_ = init.FlagPluginPath.Set("/test1")
-				_ = init.FlagPluginPath.Set("/test2")
+				init.FlagPluginPath = append(init.FlagPluginPath, "/test1")
+				init.FlagPluginPath = append(init.FlagPluginPath, "/test2")
+			}),
+		},
+		"lock disabled": {
+			args: []string{"-lock=false"},
+			want: initArgsWithDefaults(func(init *Init) {
+				init.State.Lock = false
+			}),
+		},
+		"lock-timeout": {
+			args: []string{"-lock-timeout=30s"},
+			want: initArgsWithDefaults(func(init *Init) {
+				init.State.LockTimeout = 30 * time.Second
 			}),
 		},
 	}
-
-	cmpOpts := cmpopts.IgnoreUnexported(Vars{}, ViewOptions{})
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
@@ -104,7 +115,7 @@ func TestParseInit_basicValidation(t *testing.T) {
 			if len(diags) > 0 {
 				t.Fatalf("unexpected diags: %v", diags)
 			}
-			if diff := cmp.Diff(tc.want, got, cmpOpts); diff != "" {
+			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("unexpected result\n%s", diff)
 			}
 		})
@@ -213,65 +224,6 @@ func TestParseInit_backendCloudSynchronization(t *testing.T) {
 			}
 			if got.FlagBackend != got.FlagCloud {
 				t.Errorf("wrong FlagBackend. expected to be in sync with FlagCloud, instead got FlagBackend=%t and FlagCloud=%t", got.FlagCloud, got.FlagBackend)
-			}
-		})
-	}
-}
-
-func TestParseInit_backendFlags(t *testing.T) {
-	testCases := map[string]struct {
-		args        []string
-		wantBackend Backend
-	}{
-		"ignore-remote-version": {
-			args: []string{"-ignore-remote-version"},
-			wantBackend: backendWithDefaults(func(backend *Backend) {
-				backend.IgnoreRemoteVersion = true
-			}),
-		},
-		"lock disabled": {
-			args: []string{"-lock=false"},
-			wantBackend: backendWithDefaults(func(backend *Backend) {
-				backend.StateLock = false
-			}),
-		},
-		"lock-timeout": {
-			args: []string{"-lock-timeout=30s"},
-			wantBackend: backendWithDefaults(func(backend *Backend) {
-				backend.StateLockTimeout = 30 * time.Second
-			}),
-		},
-		"migrate-state": {
-			args: []string{"-migrate-state"},
-			wantBackend: backendWithDefaults(func(backend *Backend) {
-				backend.MigrateState = true
-			}),
-		},
-		"reconfigure": {
-			args: []string{"-reconfigure"},
-			wantBackend: backendWithDefaults(func(backend *Backend) {
-				backend.Reconfigure = true
-			}),
-		},
-		"force-copy": {
-			args: []string{"-force-copy"},
-			wantBackend: backendWithDefaults(func(backend *Backend) {
-				backend.ForceInitCopy = true
-				backend.MigrateState = true
-			}),
-		},
-	}
-
-	for name, tc := range testCases {
-		t.Run(name, func(t *testing.T) {
-			got, closer, diags := ParseInit(tc.args)
-			defer closer()
-
-			if len(diags) > 0 {
-				t.Fatalf("unexpected diags: %v", diags)
-			}
-			if diff := cmp.Diff(tc.wantBackend, *got.Backend); diff != "" {
-				t.Errorf("unexpected Backend result (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -470,36 +422,25 @@ func initArgsWithDefaults(mutate func(init *Init)) *Init {
 		TestsDirectory:  "tests",
 		FlagGet:         true,
 		FlagUpgrade:     false,
-		FlagPluginPath:  nil,
+		FlagPluginPath:  []string{},
 		FlagConfigExtra: flags.NewRawFlags("-backend-config"),
 		FlagBackend:     true,
 		FlagCloud:       true,
 		BackendFlagSet:  false,
 		CloudFlagSet:    false,
-		ViewOptions: ViewOptions{
-			ViewType:     ViewHuman,
-			InputEnabled: true,
+		View: &View{
+			ConsolidateWarnings: true,
+			ViewType:            ViewHuman,
+			InputEnabled:        true,
+			LintInclude:         make(collections.Set[linting.RuleAddr]),
+			LintExclude:         make(collections.Set[linting.RuleAddr]),
 		},
 		Vars:    &Vars{},
-		Backend: &Backend{StateLock: true},
+		State:   &State{Lock: true},
+		Backend: &Backend{},
 	}
 	if mutate != nil {
 		mutate(ret)
-	}
-	return ret
-}
-
-func backendWithDefaults(mutate func(backend *Backend)) Backend {
-	ret := Backend{
-		IgnoreRemoteVersion: false,
-		StateLock:           true,
-		StateLockTimeout:    0,
-		ForceInitCopy:       false,
-		Reconfigure:         false,
-		MigrateState:        false,
-	}
-	if mutate != nil {
-		mutate(&ret)
 	}
 	return ret
 }

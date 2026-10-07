@@ -31,11 +31,17 @@ import ExpectFailureResourcesMain from '!!raw-loader!./examples/expect_failures_
 import ExpectFailureResourcesTest from '!!raw-loader!./examples/expect_failures_resources/main.tftest.hcl'
 import OverrideResourceMain from '!!raw-loader!./examples/override_resource/main.tf'
 import OverrideResourceTest from '!!raw-loader!./examples/override_resource/main.tftest.hcl'
+import OverrideResourceInstanceMain from '!!raw-loader!./examples/override_resource_instance/main.tf'
+import OverrideResourceInstanceTest from '!!raw-loader!./examples/override_resource_instance/main.tftest.hcl'
+import OverrideResourceProviderMain from '!!raw-loader!./examples/override_resource_provider/main.tf'
+import OverrideResourceProviderTest from '!!raw-loader!./examples/override_resource_provider/main.tftest.hcl'
 import MockProviderMain from '!!raw-loader!./examples/mock_provider/main.tf'
 import MockProviderTest from '!!raw-loader!./examples/mock_provider/main.tftest.hcl'
 import OverrideModuleMain from '!!raw-loader!./examples/override_module/main.tf'
 import OverrideModuleTest from '!!raw-loader!./examples/override_module/main.tftest.hcl'
 import OverrideModuleBucketMeta from '!!raw-loader!./examples/override_module/bucket_meta/main.tf'
+import MockResourceMain from '!!raw-loader!./examples/mock_resource/main.tf'
+import MockResourceTest from '!!raw-loader!./examples/mock_resource/main.tftest.hcl'
 
 # Command: test
 
@@ -171,6 +177,7 @@ A test file consists of:
   current file.
 * The **[`provider` blocks](#the-providers-block)** (optional): define the providers to be used for the tests.
 * The **[`mock_provider` blocks](#the-mock_provider-blocks)** (optional): define the providers to be mocked.
+* The **[`mock_resource` and `mock_data` blocks](#the-mock_resource-and-mock_data-blocks)** (optional): define default values for computed attributes of mocked resources and data sources.
 * The **[`override_resource` blocks](#the-override_resource-and-override_data-blocks)** (optional): define the resources to be overridden.
 * The **[`override_data` blocks](#the-override_resource-and-override_data-blocks)** (optional): define the data sources to be overridden.
 * The **[`override_module` blocks](#the-override_module-block)** (optional): define the module calls to be overridden.
@@ -504,6 +511,44 @@ without actually creating it:
     </TabItem>
 </Tabs>
 
+### The `mock_resource` and `mock_data` blocks
+
+These blocks are used inside a `mock_provider` block to customize mocked values for a specific resource or data source type.
+
+When using `mock_provider`, OpenTofu skips real provider calls and generates placeholder values for computed attributes.
+Use `mock_resource` and `mock_data` to set default values for computed attributes/blocks for a given resource or data source type, instead of relying on auto generated placeholders.
+
+A `mock_resource` / `mock_data` block affects **all instances** of the given type that are handled by the surrounding `mock_provider`.
+
+:::note
+
+Defaults can only be set for **computed** attributes/blocks; configuration values cannot be changed via mocks.
+
+:::
+
+These blocks consist of the following elements:
+
+| Name     | Type         | Description                                                                                                                                                         |
+|:--------:|:------------:|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| defaults | map          | Optional. Default values for computed attributes and blocks for this type. If omitted, OpenTofu auto generates values.  |
+
+:::note
+
+`mock_resource` and `mock_data` blocks override the entire resource or data source types. If you want to override a specific instance of a resource, use the `override_resource` or `override_data` blocks. When both are defined for the same resource instance, `override_resource`/`override_data` takes precedence because it is more specific.
+
+:::
+
+In the example below, we use mock_resource and mock_data to provide stable defaults for computed attributes, while verifying that the mock defaults are applied correctly — all without making real provider API calls:
+
+<Tabs>
+    <TabItem value={"test"} label={"main.tftest.hcl"} default>
+        <CodeBlock language={"hcl"}>{MockResourceTest}</CodeBlock>
+    </TabItem>
+    <TabItem value={"main"} label={"main.tf"}>
+        <CodeBlock language={"hcl"}>{MockResourceMain}</CodeBlock>
+    </TabItem>
+</Tabs>
+
 ### The `override_resource` and `override_data` blocks
 
 In some cases you may want to test your infrastructure with certain resources or data sources being overridden.
@@ -536,12 +581,27 @@ In the example below, we test if the bucket name is correctly passed to the reso
     </TabItem>
 </Tabs>
 
-:::warning Limitation
+As of OpenTofu 1.12, you can also specify instances of a resource or data source which use a `for_each` or `count`. You can even specify all of them, using a wildcard instance key.
 
-You cannot use `override_resource` or `override_data` with a single instance of a resource or data source.
-Each instance of a resource or data source must be overridden.
+<Tabs>
+    <TabItem value={"test"} label={"main.tftest.hcl"} default>
+        <CodeBlock language={"hcl"}>{OverrideResourceInstanceTest}</CodeBlock>
+    </TabItem>
+    <TabItem value={"main"} label={"main.tf"}>
+        <CodeBlock language={"hcl"}>{OverrideResourceInstanceMain}</CodeBlock>
+    </TabItem>
+</Tabs>
 
-:::
+As mentioned before, you can specify an override in either the `mock_provider` block or at the root level of a test file. Root-level overrides always take precedence over anything specified in the `mock_provider` regardless of specificity, as you can see in this example.
+
+<Tabs>
+    <TabItem value={"test"} label={"main.tftest.hcl"} default>
+        <CodeBlock language={"hcl"}>{OverrideResourceProviderTest}</CodeBlock>
+    </TabItem>
+    <TabItem value={"main"} label={"main.tf"}>
+        <CodeBlock language={"hcl"}>{OverrideResourceProviderMain}</CodeBlock>
+    </TabItem>
+</Tabs>
 
 ### Automatically generated values
 

@@ -9,16 +9,35 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mitchellh/cli"
 	"github.com/opentofu/opentofu/internal/backend"
 	"github.com/opentofu/opentofu/internal/command/arguments"
 	"github.com/opentofu/opentofu/internal/command/views"
+	"github.com/opentofu/opentofu/internal/configs/configload"
 	"github.com/opentofu/opentofu/internal/dag"
 	"github.com/opentofu/opentofu/internal/plans"
 	"github.com/opentofu/opentofu/internal/plans/planfile"
 	"github.com/opentofu/opentofu/internal/tfdiags"
 	"github.com/opentofu/opentofu/internal/tofu"
 )
+
+func GraphCommander() Command {
+	cmd := Command{
+		Name:  "graph",
+		Short: "Generate a Graphviz graph of the steps in an operation",
+		Long: `Produces a representation of the dependency graph between different objects in the current configuration and state.
+
+The graph is presented in the DOT language. The typical program that can read this format is GraphViz, but many web services are also available to read this format.`,
+
+		DiagsWithNewline: true,
+	}
+
+	args := arguments.BindGraph(&cmd.CommandLine)
+	cmd.Run = func(meta Meta) int {
+		return GraphCommand{meta}.Execute(args, views.NewGraph(meta.View))
+	}
+
+	return cmd
+}
 
 // GraphCommand is a Command implementation that takes a OpenTofu
 // configuration and outputs the dependency tree in graphical form.
@@ -27,25 +46,13 @@ type GraphCommand struct {
 }
 
 func (c *GraphCommand) Run(rawArgs []string) int {
+	return RunCommand(GraphCommander(), c.Meta, rawArgs)
+}
+func (c GraphCommand) Execute(args *arguments.Graph, view views.Graph) int {
+	var diags tfdiags.Diagnostics
+
 	ctx := c.CommandContext()
 
-	common, rawArgs := arguments.ParseView(rawArgs)
-	c.View.Configure(common)
-	// Because the legacy UI was using println to show diagnostics and the new view is using, by default, print,
-	// in order to keep functional parity, we setup the view to add a new line after each diagnostic.
-	c.View.DiagsWithNewline()
-
-	// Parse and validate flags
-	args, closer, diags := arguments.ParseGraph(rawArgs)
-	defer closer()
-
-	// Instantiate the view, even if there are flag errors, so that we render
-	// diagnostics according to the desired view
-	view := views.NewGraph(c.View)
-	if diags.HasErrors() {
-		view.Diagnostics(diags)
-		return cli.RunResultHelp
-	}
 	c.Meta.variableArgs = args.Vars.All()
 
 	// This gets the current directory as full path.
@@ -147,7 +154,7 @@ func (c *GraphCommand) Run(rawArgs []string) int {
 	// Build the operation
 	opReq := c.Operation(ctx, b, view.Backend(), enc)
 	opReq.ConfigDir = configPath
-	opReq.ConfigLoader, err = c.initConfigLoader()
+	opReq.ConfigLoader, err = configload.Initialise(c.configLoader())
 	opReq.PlanFile = planFile
 	opReq.AllowUnsetVariables = true
 
@@ -171,7 +178,9 @@ func (c *GraphCommand) Run(rawArgs []string) int {
 	}
 
 	// Get the context
-	lr, _, ctxDiags := local.LocalRun(ctx, opReq)
+	stopCtx, cancel := c.InterruptibleContext(ctx)
+	defer cancel()
+	lr, _, ctxDiags := local.LocalRun(ctx, stopCtx, opReq)
 	diags = diags.Append(ctxDiags)
 	if ctxDiags.HasErrors() {
 		view.Diagnostics(diags)
@@ -283,7 +292,7 @@ Options:
 
   -type=plan       Type of graph to output. Can be: plan, plan-refresh-only,
                    plan-destroy, or apply. By default OpenTofu chooses
-				   "plan", or "apply" if you also set the -plan=... option.
+                   "plan", or "apply" if you also set the -plan=... option.
 
   -module-depth=n  (deprecated) In prior versions of OpenTofu, specified the
 				   depth of modules to show in the output.

@@ -66,6 +66,10 @@ type Dir struct {
 	// directory named ".terraform" within mainDir, but users may
 	// override it.
 	dataDir string
+
+	// dataDirOverridden is true when OverrideDataDir has been called,
+	// which typically means the TF_DATA_DIR environment variable was set.
+	dataDirOverridden bool
 }
 
 // NewWorkdir returns a [*Dir] instance configured with the following:
@@ -94,6 +98,26 @@ func NewWorkdir(args []string) (*Dir, []string, error) {
 		ret.OverrideDataDir(overrideWd)
 	}
 	return ret, args, nil
+}
+
+// TODO replace the above function with this once the meta-refactor is complete
+func NewWorkdirExplicit(chdir string) (*Dir, error) {
+	originalWd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to determine current working directory: %s", err)
+	}
+
+	err = runChdirDirect(chdir)
+	if err != nil {
+		return nil, err
+	}
+
+	ret := NewDir(".") // caller should already have used os.Chdir in "-chdir=..." mode
+	ret.OverrideOriginalWorkingDir(originalWd)
+	if overrideWd := os.Getenv(workingDirEnvVarKey); overrideWd != "" {
+		ret.OverrideDataDir(overrideWd)
+	}
+	return ret, nil
 }
 
 // NewDir constructs a new working directory, anchored at the given path.
@@ -134,7 +158,7 @@ func (d *Dir) OverrideOriginalWorkingDir(originalPath string) {
 }
 
 // OverrideDataDir chooses a specific alternative directory to read and write
-// the persistent working directory settings.
+// the persistent working directory settings. It also sets the dataDirOverridden flag to true.
 //
 // "package main" can call this if it detects that the user has overridden
 // the default location by setting the relevant environment variable. Don't
@@ -143,6 +167,13 @@ func (d *Dir) OverrideOriginalWorkingDir(originalPath string) {
 // working directory.
 func (d *Dir) OverrideDataDir(dataDir string) {
 	d.dataDir = filepath.Clean(dataDir)
+	d.dataDirOverridden = true
+}
+
+// DataDirOverridden reports whether the data directory was explicitly
+// overridden, by calling OverrideDataDir.
+func (d *Dir) DataDirOverridden() bool {
+	return d.dataDirOverridden
 }
 
 // RootModuleDir returns the directory where we expect to find the root module

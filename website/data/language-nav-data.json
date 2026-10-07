@@ -1228,6 +1228,12 @@
     ]
   },
   {
+    "title": "Symbol Libraries",
+    "routes": [
+      { "title": "Overview", "path": "language/symbol-libraries/index" }
+    ]
+  },
+  {
     "title": "OpenTofu Settings",
     "routes": [
       { "title": "Overview", "path": "language/settings/index" },
@@ -1371,10 +1377,6 @@
         "path": "language/state/sensitive-data"
       }
     ]
-  },
-  {
-    "title": "Upgrading to OpenTofu v1.5",
-    "path": "language/upgrade-guides/index"
   },
   {
     "title": "v1.x Compatibility Promises",

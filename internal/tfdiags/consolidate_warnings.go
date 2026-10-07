@@ -7,6 +7,37 @@ package tfdiags
 
 import "fmt"
 
+// ConsolidationOpt is the type that can be used to define additional options that can go into the
+// consolidation logic.
+type ConsolidationOpt uint8
+
+const (
+	// ConsolidationOptIncludeCount is the option to include the number of consolidated warnings into the one
+	// that remains to be printed
+	ConsolidationOptIncludeCount ConsolidationOpt = 1 << iota
+	// ConsolidationOptDefault represents all the default options for the consolidation.
+	// If a new option is added into the consolidation logic, it should be added into this value and
+	// any call to the consolidation method should **exclude** (ie: xor (^) bitwise operation) the option
+	// that is not needed from this default.
+	// This way, any new addition to this default, without any other modifications to the consolidation method
+	// calls will result in automatic inclusion of the new functionality for all the calls.
+	ConsolidationOptDefault = ConsolidationOptIncludeCount
+)
+
+type DiagnosticConsolidationKeyFn func(Diagnostic) string
+
+func DefaultDiagnosticsConsolidation(diag Diagnostic) string {
+	desc := diag.Description()
+	consolidationKey := desc.Summary
+	// If the diagnostic has a keyable extra info and it's not empty,
+	// use it as the consolidation key, along with the summary.
+	// Otherwise use the summary only.
+	if key, keyOk := diag.ExtraInfo().(Keyable); keyOk {
+		consolidationKey += key.ExtraInfoKey()
+	}
+	return consolidationKey
+}
+
 // Consolidate checks if there is an unreasonable amount of diagnostics
 // with the same summary in the receiver and, if so, returns a new diagnostics
 // with some of those diagnostics consolidated into a single diagnostic in order
@@ -22,7 +53,7 @@ import "fmt"
 //
 // The definition of "unreasonable" is given as the threshold argument. At most
 // that many diagnostics with the same summary will be shown.
-func (diags Diagnostics) Consolidate(threshold int, level Severity) Diagnostics {
+func (diags Diagnostics) Consolidate(threshold int, level Severity, keyFn DiagnosticConsolidationKeyFn, optionsMask ConsolidationOpt) Diagnostics {
 	if len(diags) == 0 {
 		return nil
 	}
@@ -54,18 +85,12 @@ func (diags Diagnostics) Consolidate(threshold int, level Severity) Diagnostics 
 			continue
 		}
 
-		desc := diag.Description()
-		consolidationKey := desc.Summary
-		// If the diagnostic has a keyable extra info and it's not empty,
-		// use it as the consolidation key, along with the summary.
-		// Otherwise use the summary only.
-		if key, keyOk := diag.ExtraInfo().(Keyable); keyOk {
-			consolidationKey += key.ExtraInfoKey()
-		}
-
+		consolidationKey := keyFn(diag)
 		if g, ok := diagnosticGroups[consolidationKey]; ok {
 			// We're already grouping this one, so we'll just continue it.
-			g.Append(diag)
+			if optionsMask&ConsolidationOptIncludeCount != 0 {
+				g.Append(diag)
+			}
 			continue
 		}
 

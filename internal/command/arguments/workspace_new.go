@@ -6,8 +6,6 @@
 package arguments
 
 import (
-	"time"
-
 	"github.com/opentofu/opentofu/internal/tfdiags"
 )
 
@@ -15,54 +13,31 @@ type WorkspaceNew struct {
 	// Workspace represents the name of the workspace that the user wants to be selected.
 	WorkspaceName string
 
-	// StatePath allows the user to give a specific state file into the command.
-	StatePath string
-	// StateLock allows the user to disable, the default enabled, state locking.
-	StateLock bool
-	// StateLockTimeout allows the user to configure the timeout for the locking of the state..
-	StateLockTimeout time.Duration
+	// View represents the global view options
+	View *View
 
-	// ViewOptions contains the options that allows the user to configure different types of outputs
-	// from the current command.
-	ViewOptions ViewOptions
+	// Vars and State are the common extended flags
+	Vars  *Vars
+	State *State
+}
 
-	// Vars holds the information that might be needed to be given through `-var`/`-var-file`.
-	Vars *Vars
+// BindWorkspaceNew registers CLI arguments, returning a WorkspaceNew value and it's corresponding hooks.
+func BindWorkspaceNew(cli *CommandLine) *WorkspaceNew {
+	ret := WorkspaceNew{
+		View:  BindView(cli, viewFlagNoInput),
+		Vars:  BindVars(cli),
+		State: BindState(cli, stateFlagLock|stateFlagStateIn),
+	}
+
+	cli.ArgHelp = "Expected a single argument: NAME."
+	cli.PositionalArg(&ret.WorkspaceName, "NAME", false)
+
+	return &ret
 }
 
 func ParseWorkspaceNew(args []string) (*WorkspaceNew, func(), tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-
-	ret := &WorkspaceNew{
-		Vars: &Vars{},
-	}
-
-	cmdFlags := extendedFlagSet("workspace new", nil, nil, ret.Vars)
-	cmdFlags.StringVar(&ret.StatePath, "state", "", "tofu state file")
-	cmdFlags.BoolVar(&ret.StateLock, "lock", true, "lock state")
-	cmdFlags.DurationVar(&ret.StateLockTimeout, "lock-timeout", 0, "lock timeout")
-	ret.ViewOptions.AddFlags(cmdFlags, false)
-
-	if err := cmdFlags.Parse(args); err != nil {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Failed to parse command-line flags",
-			err.Error(),
-		))
-	}
-
-	args = cmdFlags.Args()
-	if len(args) != 1 {
-		diags = diags.Append(tfdiags.Sourceless(
-			tfdiags.Error,
-			"Invalid arguments list",
-			"Expected a single argument: NAME.",
-		))
-	} else {
-		ret.WorkspaceName = args[0]
-	}
-
-	closer, moreDiags := ret.ViewOptions.Parse()
-	diags = diags.Append(moreDiags)
+	cli := new(CommandLine)
+	ret := BindWorkspaceNew(cli)
+	closer, diags := cli.parseWithHooks("workspace new", args)
 	return ret, closer, diags
 }

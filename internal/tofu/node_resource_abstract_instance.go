@@ -763,6 +763,12 @@ func (n *NodeAbstractResourceInstance) writeResourceInstanceStateImpl(ctx contex
 	}
 
 	obj.Value = schema.Block.RemoveEphemeralFromWriteOnly(obj.Value)
+	// Because on the line above we remove ephemeral marks from the other place where these are allowed (write-only attributes),
+	// then the resulted value should have no ephemeral marks on any of its attributes if it's a value for a resource
+	// other than an ephemeral resource.
+	if absAddr.Resource.Resource.Mode != addrs.EphemeralResourceMode && obj.Value.HasMarkDeep(marks.Ephemeral) {
+		return fmt.Errorf("non ephemeral resource (%q) found to be written with ephemeral values", absAddr.String())
+	}
 	src, err := obj.Encode(schema.Block.ImpliedType(), currentVersion, uint64(schema.IdentitySchemaVersion))
 	if err != nil {
 		return fmt.Errorf("failed to encode %s in state: %w", absAddr, err)
@@ -1097,7 +1103,7 @@ func (n *NodeAbstractResourceInstance) refresh(ctx context.Context, evalCtx Eval
 	// previous value to preserve user-marked values, for example: someone passing a sensitive arg to a non-sensitive
 	// prop on a resource
 	// Deprecated marks are not added here (..., nil, false)
-	marks := combinePathValueMarks(priorPaths, schema.Block.ValueMarks(ret.Value, nil, nil, false))
+	marks := combinePathValueMarks(priorPaths, schema.Block.ValueMarks(ret.Value, nil, nil))
 
 	// we only want to mark the value if it has marks
 	if len(marks) > 0 {
@@ -1374,7 +1380,7 @@ func (n *NodeAbstractResourceInstance) plan(
 	// Add the marks back to the planned new value -- this must happen after ignore changes
 	// have been processed
 	// Deprecated marks are not added here (..., nil, false)
-	marks := combinePathValueMarks(unmarkedPaths, schema.Block.ValueMarks(plannedNewVal, nil, nil, false))
+	marks := combinePathValueMarks(unmarkedPaths, schema.Block.ValueMarks(plannedNewVal, nil, nil))
 	if len(marks) > 0 {
 		plannedNewVal = plannedNewVal.MarkWithPaths(marks)
 	}
@@ -2097,6 +2103,41 @@ func (n *NodeAbstractResourceInstance) openEphemeralResource(ctx context.Context
 		return cty.NilVal, diags
 	}
 
+	ctx = shared.ContextWithTracer(ctx, &shared.Tracer{
+		StartEphemeralResourceInstanceOpen: func(ctx context.Context, addr addrs.AbsResourceInstance) context.Context {
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				return h.PreOpen(addr)
+			})
+			return ctx
+		},
+		EndEphemeralResourceInstanceOpen: func(ctx context.Context, addr addrs.AbsResourceInstance, diags tfdiags.Diagnostics) {
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				return h.PostOpen(addr, diags.Err())
+			})
+		},
+		StartEphemeralResourceInstanceRenew: func(ctx context.Context, addr addrs.AbsResourceInstance) context.Context {
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				return h.PreRenew(addr)
+			})
+			return ctx
+		},
+		EndEphemeralResourceInstanceRenew: func(ctx context.Context, addr addrs.AbsResourceInstance, diags tfdiags.Diagnostics) {
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				return h.PostRenew(addr, diags.Err())
+			})
+		},
+		StartEphemeralResourceInstanceClose: func(ctx context.Context, addr addrs.AbsResourceInstance) context.Context {
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				return h.PreClose(addr)
+			})
+			return ctx
+		},
+		EndEphemeralResourceInstanceClose: func(ctx context.Context, addr addrs.AbsResourceInstance, diags tfdiags.Diagnostics) {
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				return h.PostClose(addr, diags.Err())
+			})
+		},
+	})
 	newVal, closeFn, openDiags := shared.OpenEphemeralResourceInstance(
 		ctx,
 		n.Addr,
@@ -2104,38 +2145,6 @@ func (n *NodeAbstractResourceInstance) openEphemeralResource(ctx context.Context
 		n.ResolvedProvider.ProviderConfig.Correct().Instance(n.ResolvedProviderKey),
 		provider,
 		configVal,
-		shared.EphemeralResourceHooks{
-			PreOpen: func(addr addrs.AbsResourceInstance) {
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					return h.PreOpen(addr)
-				})
-			},
-			PostOpen: func(addr addrs.AbsResourceInstance, diags tfdiags.Diagnostics) {
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					return h.PostOpen(addr, diags.Err())
-				})
-			},
-			PreRenew: func(addr addrs.AbsResourceInstance) {
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					return h.PreRenew(addr)
-				})
-			},
-			PostRenew: func(addr addrs.AbsResourceInstance, diags tfdiags.Diagnostics) {
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					return h.PostRenew(addr, diags.Err())
-				})
-			},
-			PreClose: func(addr addrs.AbsResourceInstance) {
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					return h.PreClose(addr)
-				})
-			},
-			PostClose: func(addr addrs.AbsResourceInstance, diags tfdiags.Diagnostics) {
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					return h.PostClose(addr, diags.Err())
-				})
-			},
-		},
 	)
 
 	diags = diags.Append(openDiags.InConfigBody(config.Config, n.Addr.String()))
@@ -2718,15 +2727,6 @@ func (n *NodeAbstractResourceInstance) applyProvisioners(ctx context.Context, ev
 			}
 		}
 
-		// The output function
-		outputFn := func(msg string) {
-			// Given that we return nil below, this will never error
-			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-				h.ProvisionOutput(n.Addr, prov.Type, msg)
-				return HookActionContinue, nil
-			})
-		}
-
 		// If our config or connection info contains any marked values, ensure
 		// those are stripped out before sending to the provisioner. Unlike
 		// resources, we have no need to capture the marked paths and reapply
@@ -2734,29 +2734,38 @@ func (n *NodeAbstractResourceInstance) applyProvisioners(ctx context.Context, ev
 		unmarkedConfig, configMarks := config.UnmarkDeep()
 		unmarkedConnInfo, _ := connInfo.UnmarkDeep()
 
-		// Marks on the config might result in leaking sensitive values through
-		// provisioner logging, so we conservatively suppress all output in
-		// this case. This should not apply to connection info values, which
-		// provisioners ought not to be logging anyway.
-		if _, hasSensitive := configMarks[marks.Sensitive]; hasSensitive {
-			outputFn = func(msg string) {
-				// Given that we return nil below, this will never error
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					h.ProvisionOutput(n.Addr, prov.Type, "(output suppressed due to sensitive value in config)")
-					return HookActionContinue, nil
+		// During the v1.13 series only we have a more elaborate error
+		// message for using the recently-removed "winrm" connection type,
+		// which we implement here just because the provisioner-related APIs
+		// can't return diagnostics but it isn't worth refactoring that API
+		// just for behavior that we intend to remove imminently.
+		// TODO: Remove this during the v1.14 development period, at which
+		// point we'll begin returning an error message handled in the
+		// [communicator.New] function instead, which just states that "winrm"
+		// is not supported without any other guidance.
+		if unmarkedConnInfo != cty.NilVal && !unmarkedConnInfo.IsNull() {
+			if connType := unmarkedConnInfo.GetAttr("type"); connType.RawEquals(cty.StringVal("winrm")) {
+				var rng *hcl.Range
+				if connBody != nil {
+					rng = connBody.MissingItemRange().Ptr() // this is a close-enough range for this temporary error message
+				}
+				diags = diags.Append(&hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Provisioners no longer support WinRM",
+					Detail:   "The \"winrm\" connection type is no longer supported in OpenTofu v1.13 and later, because some of the upstream client libraries it had relied on are no longer maintained.\n\nModern versions of Windows allow enabling an SSH server:\n    https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_install_firstuse",
+					Subject:  rng,
 				})
 			}
 		}
-		// In case the configuration of a provisioner is referencing an
-		// ephemeral value, supress the whole output of the provisioner.
-		if _, hasEphemeral := configMarks[marks.Ephemeral]; hasEphemeral {
-			outputFn = func(msg string) {
-				// Given that we return nil below, this will never error
-				_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
-					h.ProvisionOutput(n.Addr, prov.Type, "(output suppressed due to ephemeral value in config)")
-					return HookActionContinue, nil
-				})
-			}
+
+		// The output function passes the config marks to hooks so they can
+		// inspect them (e.g. sensitive) and decide how to handle output.
+		outputFn := func(msg string) {
+			// Given that we return nil below, this will never error
+			_ = evalCtx.Hook(func(h Hook) (HookAction, error) {
+				h.ProvisionOutput(n.Addr, prov.Type, msg, configMarks)
+				return HookActionContinue, nil
+			})
 		}
 
 		output := CallbackUIOutput{OutputFn: outputFn}
@@ -2965,7 +2974,7 @@ func (n *NodeAbstractResourceInstance) apply(
 
 	// If we have paths to mark, mark those on this new value
 	// Deprecated marks are not added here (..., nil, false)
-	newValMarks := combinePathValueMarks(afterPaths, schema.Block.ValueMarks(newVal, nil, nil, false))
+	newValMarks := combinePathValueMarks(afterPaths, schema.Block.ValueMarks(newVal, nil, nil))
 	if len(newValMarks) > 0 {
 		newVal = newVal.MarkWithPaths(newValMarks)
 	}
@@ -3218,19 +3227,36 @@ func (n *NodeAbstractResourceInstance) getProvider(ctx context.Context, evalCtx 
 			}
 		}
 
+		trie := addrs.NewOverrideTrie[map[string]cty.Value]()
 		// Overridden by the provider (overrides mocks)
 		for _, res := range n.ResolvedProvider.OverrideResources {
-			if res.TargetParsed.Equal(n.Addr.ConfigResource()) && res.Mode == n.Addr.Resource.Resource.Mode {
-				overrideValues = res.Values
-				break
+			if res.TargetParsed.AffectedAbsResource().Equal(n.Addr.AffectedAbsResource()) && res.Mode == n.Addr.AffectedAbsResource().Resource.Mode {
+				trie.Set(res.TargetParsed, res.Values, res.Target.SourceRange().Ptr())
 			}
+		}
+
+		overrideValuesP, providerOverrideDiags := trie.Get(&n.Addr)
+		if overrideValuesP != nil {
+			overrideValues = *overrideValuesP
+		}
+
+		if providerOverrideDiags.HasErrors() {
+			return nil, providers.ProviderSchema{}, providerOverrideDiags.Err()
 		}
 	}
 
-	if n.Config != nil && n.Config.IsOverridden {
+	if n.Config != nil && n.Config.IsOverridden && n.Config.Overrides != nil {
 		// Overridden in the currently running test (overrides any provider settings)
-		isOverridden = n.Config.IsOverridden
-		overrideValues = n.Config.OverrideValues
+		isOverridden = true
+
+		newOverrideValues, resourceOverrideDiags := n.Config.Overrides.Get(&n.Addr)
+		if resourceOverrideDiags.HasErrors() {
+			return nil, providers.ProviderSchema{}, resourceOverrideDiags.Err()
+		}
+		// set resource override, if it exists
+		if newOverrideValues != nil {
+			overrideValues = *newOverrideValues
+		}
 	}
 
 	if isOverridden {
